@@ -57,11 +57,27 @@ jobs:
         shell: bash
         run: |
           set -xeuo pipefail
+
+          LAZARUS_DIR="/tmp/lazarus-src"
+
           brew install fpc
           git clone --depth 1 --branch lazarus_4_4 \
-            https://github.com/fpc/Lazarus.git /tmp/lazarus-src
-          make -C /tmp/lazarus-src lazbuild
-          export PATH="/tmp/lazarus-src:$PATH"
+            https://github.com/fpc/Lazarus.git "$LAZARUS_DIR"
+          make -C "$LAZARUS_DIR" lazbuild
+
+          # Seed lazbuild config so it can find the Lazarus source tree
+          mkdir -p "$HOME/.lazarus"
+          cat > "$HOME/.lazarus/environmentoptions.xml" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <CONFIG>
+            <EnvironmentOptions>
+              <LazarusDirectory Value="$LAZARUS_DIR"/>
+              <CompilerFilename Value="$(which fpc)"/>
+            </EnvironmentOptions>
+          </CONFIG>
+          EOF
+
+          export PATH="$LAZARUS_DIR:$PATH"
           fpc -iV
           lazbuild --version
           instantfpc .github/workflows/make.pas

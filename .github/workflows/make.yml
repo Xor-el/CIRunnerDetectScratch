@@ -61,7 +61,16 @@ jobs:
 
           LAZARUS_DIR="/tmp/lazarus-src"
 
-          brew install fpc
+          brew install fpc openssl@3
+
+          # macOS runners ship LibreSSL which is incompatible with FPC's
+          # openssl unit. Install real OpenSSL 3 and symlink the unversioned
+          # dylib names that FPC 3.2.2 looks for at unit initialization.
+          OSSL_LIB="$(brew --prefix openssl@3)/lib"
+          ln -sf "$OSSL_LIB/libssl.3.dylib"    "$OSSL_LIB/libssl.dylib"
+          ln -sf "$OSSL_LIB/libcrypto.3.dylib"  "$OSSL_LIB/libcrypto.dylib"
+          export DYLD_LIBRARY_PATH="$OSSL_LIB${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+
           git clone --depth 1 --branch lazarus_4_4 \
             https://github.com/fpc/Lazarus.git "$LAZARUS_DIR"
           make -C "$LAZARUS_DIR" lazbuild
@@ -79,7 +88,7 @@ jobs:
           EOF
 
           export PATH="$LAZARUS_DIR:$PATH"
-          openssl version
+          "$(brew --prefix openssl@3)/bin/openssl" version
           fpc -iV
           lazbuild --version
           instantfpc .github/workflows/make.pas

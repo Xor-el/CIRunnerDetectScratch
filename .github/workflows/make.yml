@@ -66,10 +66,15 @@ jobs:
           # macOS runners ship LibreSSL which is incompatible with FPC's
           # openssl unit. Install real OpenSSL 3 and symlink the unversioned
           # dylib names that FPC 3.2.2 looks for at unit initialization.
+          # Symlinks go into /usr/local/lib (default search path, SIP-safe)
+          # rather than using DYLD_LIBRARY_PATH which SIP strips from child
+          # processes spawned by instantfpc.
           OSSL_LIB="$(brew --prefix openssl@3)/lib"
-          ln -sf "$OSSL_LIB/libssl.3.dylib"    "$OSSL_LIB/libssl.dylib"
-          ln -sf "$OSSL_LIB/libcrypto.3.dylib"  "$OSSL_LIB/libcrypto.dylib"
-          export DYLD_LIBRARY_PATH="$OSSL_LIB${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+          sudo mkdir -p /usr/local/lib
+          sudo ln -sf "$OSSL_LIB/libssl.3.dylib"    /usr/local/lib/libssl.dylib
+          sudo ln -sf "$OSSL_LIB/libcrypto.3.dylib"  /usr/local/lib/libcrypto.dylib
+          sudo ln -sf "$OSSL_LIB/libssl.3.dylib"    /usr/local/lib/libssl.3.dylib
+          sudo ln -sf "$OSSL_LIB/libcrypto.3.dylib"  /usr/local/lib/libcrypto.3.dylib
 
           git clone --depth 1 --branch lazarus_4_4 \
             https://github.com/fpc/Lazarus.git "$LAZARUS_DIR"

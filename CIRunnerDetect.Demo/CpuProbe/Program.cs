@@ -1,5 +1,5 @@
-// Machine-readable lines: NAME=1 (true), NAME=0 (false), NAME=-1 (not exposed by .NET on this TFM).
-// PCLMULQDQ / VPCLMULQDQ mirror HashLib gating (SSSE3+ and AVX2+ respectively).
+// Machine-readable lines: NAME=1 (true), NAME=0 (false), NAME=-1 (not exposed / not resolvable).
+// Targets net10.0. VPCLMULQDQ uses Pclmulqdq.V256.IsSupported (AVX2 path). PCLMULQDQ mirrors HashLib (SSSE3+).
 
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -83,13 +83,14 @@ internal static class Program
         var pcl = ssse3 && X86ni.Pclmulqdq.IsSupported;
         Console.WriteLine($"PCLMULQDQ={(pcl ? 1 : 0)}");
 
+        // VPCLMULQDQ (256-bit): exposed as Pclmulqdq.V256.IsSupported on .NET 10+ (not a top-level Vpclmulqdq type).
         if (!X86ni.Avx2.IsSupported)
             Console.WriteLine("VPCLMULQDQ=0");
         else
-            Console.WriteLine($"VPCLMULQDQ={GetIntrinsicTriState("System.Runtime.Intrinsics.X86.Vpclmulqdq")}");
+            Console.WriteLine($"VPCLMULQDQ={(X86ni.Pclmulqdq.V256.IsSupported ? 1 : 0)}");
 
         Console.WriteLine($"AESNI={(X86ni.Aes.IsSupported ? 1 : 0)}");
-        // Intel SHA extensions: not exposed in net8 reference assemblies; tri-state probes runtime.
+        // Intel SHA extensions: still not a documented X86.Sha type in ref assemblies; probe at runtime.
         Console.WriteLine($"SHANI={GetIntrinsicTriState("System.Runtime.Intrinsics.X86.Sha")}");
 
         Console.WriteLine($"SIMDLVL={X86SimdLevel()}");
@@ -109,35 +110,37 @@ internal static class Program
     private static void PrintArm64()
     {
         Console.WriteLine("ARCH=arm64");
-
+        
         Console.WriteLine($"NEON={(Armi.AdvSimd.IsSupported ? 1 : 0)}");
 
-        Console.WriteLine($"SVE={GetIntrinsicTriState("System.Runtime.Intrinsics.Arm.Sve")}");
-        Console.WriteLine($"SVE2={GetIntrinsicTriState("System.Runtime.Intrinsics.Arm.Sve2")}");
+        // Experimental (SYSLIB5003) — suppressed in CpuProbe.csproj; see https://aka.ms/dotnet-warnings/SYSLIB5003
+        Console.WriteLine($"SVE={(Armi.Sve.IsSupported ? 1 : 0)}");
+        Console.WriteLine($"SVE2={(Armi.Sve2.IsSupported ? 1 : 0)}");
 
         Console.WriteLine($"AES={(Armi.Aes.IsSupported ? 1 : 0)}");
         Console.WriteLine($"SHA1={(Armi.Sha1.IsSupported ? 1 : 0)}");
         Console.WriteLine($"SHA256={(Armi.Sha256.IsSupported ? 1 : 0)}");
         Console.WriteLine($"SHA512={GetIntrinsicTriState("System.Runtime.Intrinsics.Arm.Sha512")}");
         Console.WriteLine($"SHA3={GetIntrinsicTriState("System.Runtime.Intrinsics.Arm.Sha3")}");
-
+       
         Console.WriteLine($"CRC32={(Armi.Crc32.IsSupported ? 1 : 0)}");
 
-        // No direct PMULL IsSupported in BCL.
-        Console.WriteLine("PMULL=-1");
+        // PMULL (64-bit poly long, HWCAP_PMULL / FEAT_PMULL): Aes.PolynomialMultiplyWideningLower/Upper(UInt64) → A64 PMULL/PMULL2 on .1D (MS Learn). Gated by Arm.Aes.IsSupported.
+        Console.WriteLine($"PMULL={ArmPoly64PmullProbe()}");
 
         Console.WriteLine($"SIMDLVL={ArmSimdLevel()}");
     }
+
+    /// <summary>Maps to HashLib AArch64 PMULL (poly64 long): same gate .NET uses for Aes.PolynomialMultiplyWidening* (UInt64).</summary>
+    private static int ArmPoly64PmullProbe() => Armi.Aes.IsSupported ? 1 : 0;
 
     private static string ArmSimdLevel()
     {
         if (!Armi.AdvSimd.IsSupported)
             return "scalar";
-        var sve2 = GetIntrinsicTriState("System.Runtime.Intrinsics.Arm.Sve2");
-        var sve = GetIntrinsicTriState("System.Runtime.Intrinsics.Arm.Sve");
-        if (sve2 == 1)
+        if (Armi.Sve2.IsSupported)
             return "sve2";
-        if (sve == 1)
+        if (Armi.Sve.IsSupported)
             return "sve";
         return "neon";
     }
@@ -157,7 +160,7 @@ internal static class Program
         Console.WriteLine($"SHA3={GetIntrinsicTriState("System.Runtime.Intrinsics.Arm.Sha3")}");
 
         Console.WriteLine($"CRC32={(Armi.Crc32.IsSupported ? 1 : 0)}");
-        Console.WriteLine("PMULL=-1");
+        Console.WriteLine($"PMULL={ArmPoly64PmullProbe()}");
 
         Console.WriteLine($"SIMDLVL={ArmSimdLevel32()}");
     }

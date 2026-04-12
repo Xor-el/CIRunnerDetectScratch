@@ -2,10 +2,13 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>CpuProbe</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <!-- Arm.Sve / Arm.Sve2 are [Experimental(SYSLIB5003)]; allow use from CpuProbe. -->
+    <NoWarn>$(NoWarn);SYSLIB5003</NoWarn>
   </PropertyGroup>
 
 </Project>

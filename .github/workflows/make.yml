@@ -27,6 +27,7 @@ jobs:
           - ubuntu-24.04-arm
           - windows-latest
           - macos-latest
+          - macos-15-intel
 
     steps:
       - name: Checkout
@@ -50,20 +51,19 @@ jobs:
           fpc -iV
           instantfpc .github/workflows/make.pas
 
-      # ─── macOS ──────────────────────────────────────────────────────────
-      - name: Install Lazarus on macOS
-        if: runner.os == 'macOS'
-        uses: gcarreno/setup-lazarus@v3
-        with:
-          lazarus-version: stable
-          with-cache: false
-
+      # ─── macOS (unified for x86_64 and AArch64) ───────────────────────
       - name: Build on macOS
         if: runner.os == 'macOS'
         shell: bash
         run: |
           set -xeuo pipefail
+          brew install fpc
+          git clone --depth 1 --branch lazarus_4_4 \
+            https://github.com/fpc/Lazarus.git /tmp/lazarus-src
+          make -C /tmp/lazarus-src lazbuild
+          export PATH="/tmp/lazarus-src:$PATH"
           fpc -iV
+          lazbuild --version
           instantfpc .github/workflows/make.pas
 
       # ─── Windows ────────────────────────────────────────────────────────

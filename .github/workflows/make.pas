@@ -531,6 +531,17 @@ begin
   // Install and register dependencies (safe when array is empty)
   if Length(Dependencies) > 0 then
   begin
+    // FPC 3.2.2 only knows OpenSSL 1.1 DLL names on Windows.
+    // Override to use OpenSSL 3.x which ships on modern CI runners.
+    {$IFDEF MSWINDOWS}
+      {$IFDEF WIN64}
+    DLLSSLName  := 'libssl-3-x64.dll';
+    DLLUtilName := 'libcrypto-3-x64.dll';
+      {$ELSE}
+    DLLSSLName  := 'libssl-3.dll';
+    DLLUtilName := 'libcrypto-3.dll';
+      {$ENDIF}
+    {$ENDIF}
     InitSSLInterface;
     for I := 0 to High(Dependencies) do
       RegisterAllPackages(ResolveDependency(Dependencies[I]));

@@ -48,6 +48,7 @@ jobs:
         run: |
           set -xeuo pipefail
           sudo bash -c 'apt-get update; apt-get install -y lazarus' >/dev/null
+          openssl version
           fpc -iV
           instantfpc .github/workflows/make.pas
 
@@ -60,7 +61,19 @@ jobs:
 
           LAZARUS_DIR="/tmp/lazarus-src"
 
-          brew install fpc
+          brew install fpc openssl@3
+
+          # macOS runners ship LibreSSL which is incompatible with FPC's
+          # openssl unit. Install real OpenSSL 3 via Homebrew.
+          # FPC 3.2.2 on Darwin tries libssl.1.1.dylib first (hardcoded in
+          # openssl.pas DLLVersions, with unversioned name disabled on Darwin).
+          # Symlink that name to Homebrew's OpenSSL 3 in /usr/local/lib which
+          # is on dyld's default fallback search path.
+          OSSL_LIB="$(brew --prefix openssl@3)/lib"
+          sudo mkdir -p /usr/local/lib
+          sudo ln -sf "$OSSL_LIB/libssl.3.dylib"    /usr/local/lib/libssl.1.1.dylib
+          sudo ln -sf "$OSSL_LIB/libcrypto.3.dylib"  /usr/local/lib/libcrypto.1.1.dylib
+
           git clone --depth 1 --branch lazarus_4_4 \
             https://github.com/fpc/Lazarus.git "$LAZARUS_DIR"
           make -C "$LAZARUS_DIR" lazbuild
@@ -78,6 +91,7 @@ jobs:
           EOF
 
           export PATH="$LAZARUS_DIR:$PATH"
+          "$(brew --prefix openssl@3)/bin/openssl" version
           fpc -iV
           lazbuild --version
           instantfpc .github/workflows/make.pas
@@ -90,23 +104,15 @@ jobs:
           $ErrorActionPreference = 'Stop'
           Set-PSDebug -Strict
 
-          Write-Host "Installing Lazarus and OpenSSL 1.1 via Chocolatey..."
+          Write-Host "Installing Lazarus via Chocolatey..."
           choco install lazarus -y --no-progress
-          choco install openssl.light --version=1.1.1.20181020 -y --no-progress
 
           # Discover FPC bin path dynamically
           $fpcDir = Get-ChildItem 'C:\Lazarus\fpc' -Directory | Select-Object -First 1
           $env:Path += ";C:\Lazarus;$($fpcDir.FullName)\bin\x86_64-win64"
 
-          # Add OpenSSL to PATH (check known locations)
-          $opensslPaths = @(
-            'C:\ProgramData\chocolatey\lib\openssl.light\tools',
-            'C:\Program Files\OpenSSL\bin',
-            'C:\Program Files\OpenSSL-Win64\bin'
-          )
-          foreach ($p in $opensslPaths) {
-            if (Test-Path $p) { $env:Path += ";$p" }
-          }
+          Write-Host "OpenSSL version:"
+          openssl version
 
           Write-Host "FPC version:"
           fpc -iV

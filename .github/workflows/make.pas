@@ -55,7 +55,6 @@ const
     // Examples:
     // (Kind: TDependencyKind.OPM;    Name: 'HashLib';               Ref: ''),
     // (Kind: TDependencyKind.GitHub; Name: 'Xor-el/SimpleBaseLib4Pascal';  Ref: 'master'),
-    (Kind: TDependencyKind.GitHub; Name: 'Xor-el/SimpleBaseLib4Pascal';  Ref: 'master')
   );
 
 // ---------------------------------------------------------------------------

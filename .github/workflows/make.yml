@@ -263,6 +263,15 @@ jobs:
             pkg_add -uu pcre2 || true
             pkg_add fpc git wget gmake
 
+            # NetBSD's FPC package may not generate fpc.cfg properly.
+            # Ensure fpc.cfg exists and points to the correct unit paths.
+            FPC_VER=$(fpc -iV)
+            FPC_CFG="/usr/pkg/etc/fpc.cfg"
+            if [ ! -f "$FPC_CFG" ] || ! grep -q "units" "$FPC_CFG"; then
+              /usr/pkg/lib/fpc/${FPC_VER}/samplecfg \
+                /usr/pkg/lib/fpc/${FPC_VER} /usr/pkg/etc
+            fi
+
             LAZARUS_DIR="/tmp/lazarus-src"
             git clone --depth 1 --branch lazarus_4_4 \
               https://github.com/fpc/Lazarus.git "$LAZARUS_DIR"

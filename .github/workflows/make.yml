@@ -314,7 +314,16 @@ jobs:
         with:
           usesh: true
           prepare: |
-            pkg install -y fpc git wget gmake
+            pkg install -y fpc git wget gmake openssl
+
+            # DragonFlyBSD ships LibreSSL in base, which is not ABI-
+            # compatible with FPC's openssl unit. Install real OpenSSL
+            # from packages and symlink so FPC can find it.
+            # Unlike the macOS/Linux libssl.1.1 naming issue, this is
+            # a fundamental LibreSSL vs OpenSSL incompatibility and
+            # won't be resolved by FPC 3.2.4+.
+            ln -sf /usr/local/lib/libssl.so /usr/local/lib/libssl.so.1.1
+            ln -sf /usr/local/lib/libcrypto.so /usr/local/lib/libcrypto.so.1.1
 
             LAZARUS_DIR="/tmp/lazarus-src"
             git clone --depth 1 --branch lazarus_4_4 \

@@ -15,19 +15,42 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# ═══════════════════════════════════════════════════════════════════════
+#  Shared configuration
+# ═══════════════════════════════════════════════════════════════════════
+
+env:
+  LAZARUS_BRANCH: lazarus_4_4
+  LAZARUS_REPO: https://github.com/fpc/Lazarus.git
+
+# ═══════════════════════════════════════════════════════════════════════
+#  Jobs
+# ═══════════════════════════════════════════════════════════════════════
+
 jobs:
-  build:
-    runs-on: ${{ matrix.os }}
+
+  # ─────────────────────────────────────────────────────────────────────
+  #  Tier 1 — Native GitHub-hosted runners (Linux, macOS, Windows)
+  # ─────────────────────────────────────────────────────────────────────
+
+  native:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - ubuntu-24.04-arm
-          - windows-latest
-          - macos-latest
-          - macos-15-intel
+        include:
+          - runner: ubuntu-latest
+            name: Linux x86_64
+          - runner: ubuntu-24.04-arm
+            name: Linux AArch64
+          - runner: windows-latest
+            name: Windows x86_64
+          - runner: macos-latest
+            name: macOS AArch64 (Apple Silicon)
+          - runner: macos-15-intel
+            name: macOS x86_64 (Intel)
 
     steps:
       - name: Checkout
@@ -41,8 +64,8 @@ jobs:
           dotnet-version: '10.0.x'
           dotnet-quality: 'ga'
 
-      # ─── Linux (unified for x86_64 and AArch64) ────────────────────────
-      - name: Build on Linux
+      # ── Linux ──────────────────────────────────────────────────────
+      - name: Build (Linux)
         if: runner.os == 'Linux'
         shell: bash
         run: |
@@ -52,8 +75,8 @@ jobs:
           fpc -iV
           instantfpc .github/workflows/make.pas
 
-      # ─── macOS (unified for x86_64 and AArch64) ───────────────────────
-      - name: Build on macOS
+      # ── macOS ──────────────────────────────────────────────────────
+      - name: Build (macOS)
         if: runner.os == 'macOS'
         shell: bash
         run: |
@@ -63,25 +86,19 @@ jobs:
 
           brew install fpc
 
-          # macOS runners ship LibreSSL which is incompatible with FPC's
-          # openssl unit. The runners do have OpenSSL 3 preinstalled via
-          # Homebrew (as a keg-only dependency) but FPC 3.2.2 on Darwin
-          # only tries libssl.1.1.dylib (hardcoded in openssl.pas
-          # DLLVersions, with the unversioned name disabled on Darwin).
-          # Symlink that name to Homebrew's OpenSSL 3 in /usr/local/lib
-          # which is on dyld's default fallback search path.
-          # This hack can be removed once we move to FPC 3.2.4+ which
-          # natively includes '.3' in DLLVersions.
+          # FPC 3.2.2 hardcodes libssl.1.1 but macOS runners ship
+          # OpenSSL 3 via Homebrew (keg-only). Symlink so FPC can find
+          # the libraries. This hack can be removed once we move to
+          # FPC 3.2.4+ which natively includes '.3' in DLLVersions.
           OSSL_LIB="$(brew --prefix openssl@3)/lib"
           sudo mkdir -p /usr/local/lib
           sudo ln -sf "$OSSL_LIB/libssl.3.dylib"    /usr/local/lib/libssl.1.1.dylib
           sudo ln -sf "$OSSL_LIB/libcrypto.3.dylib"  /usr/local/lib/libcrypto.1.1.dylib
 
-          git clone --depth 1 --branch lazarus_4_4 \
-            https://github.com/fpc/Lazarus.git "$LAZARUS_DIR"
+          git clone --depth 1 --branch "$LAZARUS_BRANCH" \
+            "$LAZARUS_REPO" "$LAZARUS_DIR"
           make -C "$LAZARUS_DIR" lazbuild
 
-          # Seed lazbuild config so it can find the Lazarus source tree
           mkdir -p "$HOME/.lazarus"
           cat > "$HOME/.lazarus/environmentoptions.xml" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
@@ -99,8 +116,8 @@ jobs:
           lazbuild --version
           instantfpc .github/workflows/make.pas
 
-      # ─── Windows ────────────────────────────────────────────────────────
-      - name: Build on Windows
+      # ── Windows ────────────────────────────────────────────────────
+      - name: Build (Windows)
         if: runner.os == 'Windows'
         shell: powershell
         run: |
@@ -110,7 +127,6 @@ jobs:
           Write-Host "Installing Lazarus via Chocolatey..."
           choco install lazarus -y --no-progress
 
-          # Discover FPC bin path dynamically
           $fpcDir = Get-ChildItem 'C:\Lazarus\fpc' -Directory | Select-Object -First 1
           $env:Path += ";C:\Lazarus;$($fpcDir.FullName)\bin\x86_64-win64"
 
@@ -123,52 +139,162 @@ jobs:
           Write-Host "Building make.pas..."
           instantfpc .github/workflows/make.pas
 
-  # ─── FreeBSD (via QEMU VM on ubuntu-latest) ───────────────────────────
-  # Install FPC via pkg, build lazbuild from source (same as macOS).
-  # x86_64: stable fpc, .NET 10 from community builds.
-  # aarch64: fpc-devel (stable fpc not packaged for arm64), no .NET.
-  build-freebsd:
+  # ─────────────────────────────────────────────────────────────────────
+  #  Tier 2 — Linux ARM32 via QEMU user-mode emulation
+  # ─────────────────────────────────────────────────────────────────────
+
+  linux-arm32:
+    name: Linux ARMv7 (QEMU)
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x86_64
-            fpc_pkg: fpc
-            dotnet_sdk_url: https://github.com/sec/dotnet-core-freebsd-source-build/releases/download/10.0.102-vmr/dotnet-sdk-10.0.102-freebsd-x64.tar.gz
-          - arch: aarch64
-            fpc_pkg: fpc-devel
-            dotnet_sdk_url: ""
-    name: FreeBSD 15.0 (${{ matrix.arch }})
     env:
-      DOTNET_SDK_URL: ${{ matrix.dotnet_sdk_url }}
-      FPC_PKG: ${{ matrix.fpc_pkg }}
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           submodules: true
 
-      - name: Build on FreeBSD
-        uses: vmactions/freebsd-vm@v1
+      - name: Build (ARMv7 via QEMU user-mode)
+        uses: uraimo/run-on-arch-action@v3
         with:
-          release: "15.0"
+          arch: armv7
+          distro: ubuntu24.04
+          githubToken: ${{ github.token }}
+          install: |
+            apt-get update
+            apt-get install -y lazarus openssl wget ca-certificates
+
+            # FPC 3.2.2 hardcodes libssl.1.1 but Ubuntu 24.04 ships
+            # OpenSSL 3.x only. Symlink so FPC can find the libraries.
+            # This hack can be removed once we move to FPC 3.2.4+ which
+            # natively includes '.3' in DLLVersions.
+            ln -sf /usr/lib/arm-linux-gnueabihf/libssl.so.3 \
+                   /usr/lib/arm-linux-gnueabihf/libssl.so.1.1
+            ln -sf /usr/lib/arm-linux-gnueabihf/libcrypto.so.3 \
+                   /usr/lib/arm-linux-gnueabihf/libcrypto.so.1.1
+          run: |
+            set -xeuo pipefail
+            openssl version
+            fpc -iV
+            instantfpc .github/workflows/make.pas
+
+  # ─────────────────────────────────────────────────────────────────────
+  #  Tier 3 — BSD family via vmactions QEMU system VMs
+  #
+  #  All BSD jobs: install FPC via package manager, build lazbuild from
+  #  source (Lazarus packages are unreliable across BSDs).
+  #  GNU make is required on all BSDs (native make is BSD make).
+  # ─────────────────────────────────────────────────────────────────────
+
+  bsd:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ── FreeBSD ──────────────────────────────────────────────
+          - name: FreeBSD x86_64
+            vm: freebsd
+            release: "15.0"
+            arch: x86_64
+            fpc_install: "pkg install -y fpc"
+            deps_install: "pkg install -y git wget gmake"
+            make_cmd: gmake
+            shell_flag: true
+
+          # Disabled: fpc-devel on aarch64 is experimental, re-enable
+          # when stable fpc lands in the FreeBSD aarch64 package repo.
+          #- name: FreeBSD AArch64
+          #  vm: freebsd
+          #  release: "15.0"
+          #  arch: aarch64
+          #  fpc_install: "pkg install -y fpc-devel"
+          #  deps_install: "pkg install -y git wget gmake"
+          #  make_cmd: gmake
+          #  shell_flag: true
+
+          # ── OpenBSD ─────────────────────────────────────────────
+          - name: OpenBSD x86_64
+            vm: openbsd
+            release: ""
+            arch: x86_64
+            fpc_install: "pkg_add fpc"
+            deps_install: "pkg_add git wget gmake"
+            make_cmd: gmake
+            shell_flag: true
+
+          - name: OpenBSD AArch64
+            vm: openbsd
+            release: ""
+            arch: aarch64
+            fpc_install: "pkg_add fpc"
+            deps_install: "pkg_add git wget gmake"
+            make_cmd: gmake
+            shell_flag: true
+
+          # ── NetBSD ──────────────────────────────────────────────
+          - name: NetBSD x86_64
+            vm: netbsd
+            release: ""
+            arch: x86_64
+            fpc_install: "pkgin -y install fpc"
+            deps_install: "pkgin -y install git wget gmake"
+            make_cmd: gmake
+            shell_flag: false
+
+          - name: NetBSD AArch64
+            vm: netbsd
+            release: ""
+            arch: aarch64
+            fpc_install: "pkgin -y install fpc"
+            deps_install: "pkgin -y install git wget gmake"
+            make_cmd: gmake
+            shell_flag: false
+
+          # ── DragonFlyBSD ────────────────────────────────────────
+          - name: DragonFlyBSD x86_64
+            vm: dragonflybsd
+            release: ""
+            arch: x86_64
+            fpc_install: "pkg install -y fpc"
+            deps_install: "pkg install -y git wget gmake"
+            make_cmd: gmake
+            shell_flag: true
+
+    env:
+      FPC_INSTALL: ${{ matrix.fpc_install }}
+      DEPS_INSTALL: ${{ matrix.deps_install }}
+      MAKE_CMD: ${{ matrix.make_cmd }}
+      LAZARUS_BRANCH_ENV: lazarus_4_4
+      LAZARUS_REPO_ENV: https://github.com/fpc/Lazarus.git
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - name: Build (${{ matrix.name }})
+        uses: vmactions/${{ matrix.vm }}-vm@v1
+        with:
+          release: ${{ matrix.release || '' }}
           arch: ${{ matrix.arch }}
-          usesh: true
-          envs: 'DOTNET_SDK_URL FPC_PKG'
+          usesh: ${{ matrix.shell_flag }}
+          envs: 'FPC_INSTALL DEPS_INSTALL MAKE_CMD LAZARUS_BRANCH_ENV LAZARUS_REPO_ENV'
           prepare: |
-            # Install FPC (package name differs per arch) and build deps
-            pkg install -y $FPC_PKG git wget gmake \
-              libunwind icu libinotify
+            # Install FPC and build dependencies
+            $FPC_INSTALL
+            $DEPS_INSTALL
 
-            # Build lazbuild from source (same approach as macOS)
+            # Build lazbuild from source
             LAZARUS_DIR="/tmp/lazarus-src"
-            git clone --depth 1 --branch lazarus_4_4 \
-              https://github.com/fpc/Lazarus.git "$LAZARUS_DIR"
-            gmake -C "$LAZARUS_DIR" lazbuild
+            git clone --depth 1 --branch "$LAZARUS_BRANCH_ENV" \
+              "$LAZARUS_REPO_ENV" "$LAZARUS_DIR"
+            $MAKE_CMD -C "$LAZARUS_DIR" lazbuild
 
-            # Seed lazbuild config so it can find the Lazarus source tree
+            # Configure lazbuild to find Lazarus source tree
             mkdir -p "$HOME/.lazarus"
             cat > "$HOME/.lazarus/environmentoptions.xml" <<EOF
             <?xml version="1.0" encoding="UTF-8"?>
@@ -184,70 +310,76 @@ jobs:
             lazbuild --version
           run: |
             set -xeuo pipefail
-
-            # Make lazbuild available in PATH
             export PATH="/tmp/lazarus-src:$PATH"
-
-            # Install .NET SDK if available for this architecture
-            if [ -n "$DOTNET_SDK_URL" ]; then
-              export DOTNET_ROOT="$HOME/.dotnet"
-              mkdir -p "$DOTNET_ROOT"
-              wget -q "$DOTNET_SDK_URL" -O /tmp/dotnet-sdk.tar.gz
-              tar xf /tmp/dotnet-sdk.tar.gz -C "$DOTNET_ROOT"
-              rm /tmp/dotnet-sdk.tar.gz
-              export PATH="$DOTNET_ROOT:$PATH"
-              dotnet --version
-            else
-              echo "NOTE: .NET SDK not available for this architecture, skipping."
-            fi
-
-            openssl version
+            openssl version || true
             fpc -iV
             lazbuild --version
             instantfpc .github/workflows/make.pas
 
-  # ─── ARMv7 / Raspberry Pi (via QEMU user-mode on ubuntu-latest) ──────
-  build-armv7:
+  # ─────────────────────────────────────────────────────────────────────
+  #  Tier 4 — Solaris via vmactions QEMU system VM
+  #
+  #  Solaris uses IPS (pkg) as its package manager. FPC has an official
+  #  x86_64-solaris target but no pre-built package — install from the
+  #  SourceForge tarball. Lazarus is built from source.
+  # ─────────────────────────────────────────────────────────────────────
+
+  solaris:
+    name: Solaris x86_64
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    name: Linux ARMv7 (QEMU)
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           submodules: true
 
-      - name: Build on ARMv7
-        uses: uraimo/run-on-arch-action@v3
+      - name: Build (Solaris x86_64)
+        uses: vmactions/solaris-vm@v1
         with:
-          arch: armv7
-          distro: ubuntu24.04
-          githubToken: ${{ github.token }}
-          install: |
-            apt-get update
-            apt-get install -y lazarus openssl wget ca-certificates
+          release: "11.4-gcc"
+          usesh: true
+          prepare: |
+            # Solaris 11.4 uses IPS (pkg) for system packages and
+            # pkgutil/CSW for community packages.
+            # FPC must be installed from the SourceForge tarball since
+            # there is no Solaris package for it.
+            pkgutil -y -i wget gmake git
 
-            # FPC 3.2.2 hardcodes libssl.1.1 / libcrypto.1.1 in its
-            # openssl unit, but Ubuntu 24.04 ships OpenSSL 3.x only.
-            # Symlink so FPC can find the libraries.
-            ln -sf /usr/lib/arm-linux-gnueabihf/libssl.so.3 \
-                   /usr/lib/arm-linux-gnueabihf/libssl.so.1.1
-            ln -sf /usr/lib/arm-linux-gnueabihf/libcrypto.so.3 \
-                   /usr/lib/arm-linux-gnueabihf/libcrypto.so.1.1
+            # Install FPC from SourceForge tarball
+            FPC_VERSION="3.2.2"
+            FPC_TARBALL="fpc-${FPC_VERSION}.x86_64-solaris.tar"
+            wget -q "https://sourceforge.net/projects/freepascal/files/Linux/${FPC_VERSION}/${FPC_TARBALL}/download" \
+              -O "/tmp/${FPC_TARBALL}"
+            cd /tmp && tar xf "${FPC_TARBALL}"
+            cd "fpc-${FPC_VERSION}.x86_64-solaris" && echo "/usr/local" | sh install.sh
+            export PATH="/usr/local/bin:$PATH"
 
-            # Install .NET SDK for ARM32 via official install script
-            wget -q https://dot.net/v1/dotnet-install.sh -O /tmp/dotnet-install.sh
-            chmod +x /tmp/dotnet-install.sh
-            /tmp/dotnet-install.sh --channel 10.0 --quality ga \
-              --install-dir /usr/share/dotnet
-            ln -sf /usr/share/dotnet/dotnet /usr/bin/dotnet
+            # Build lazbuild from source
+            LAZARUS_DIR="/tmp/lazarus-src"
+            git clone --depth 1 --branch lazarus_4_4 \
+              https://github.com/fpc/Lazarus.git "$LAZARUS_DIR"
+            gmake -C "$LAZARUS_DIR" lazbuild
+
+            # Configure lazbuild
+            mkdir -p "$HOME/.lazarus"
+            cat > "$HOME/.lazarus/environmentoptions.xml" <<EOF
+            <?xml version="1.0" encoding="UTF-8"?>
+            <CONFIG>
+              <EnvironmentOptions>
+                <LazarusDirectory Value="$LAZARUS_DIR"/>
+                <CompilerFilename Value="$(which fpc)"/>
+              </EnvironmentOptions>
+            </CONFIG>
+            EOF
+
+            export PATH="$LAZARUS_DIR:$PATH"
+            fpc -iV
+            lazbuild --version
           run: |
             set -xeuo pipefail
-            export DOTNET_ROOT=/usr/share/dotnet
-            export PATH="$PATH:$DOTNET_ROOT"
-            openssl version
+            export PATH="/tmp/lazarus-src:/usr/local/bin:$PATH"
+            openssl version || true
             fpc -iV
-            dotnet --version
+            lazbuild --version
             instantfpc .github/workflows/make.pas

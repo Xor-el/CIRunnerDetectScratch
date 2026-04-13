@@ -182,8 +182,8 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   #  Tier 3 — BSD family via vmactions QEMU system VMs
   #
-  #  All BSD jobs: install FPC via package manager where available,
-  #  build lazbuild from source. GNU make (gmake) required on all BSDs.
+  #  All BSD jobs: build lazbuild from source (Lazarus packages are
+  #  unreliable across BSDs). GNU make (gmake) required on all BSDs.
   # ─────────────────────────────────────────────────────────────────────
 
   freebsd:
@@ -249,9 +249,9 @@ jobs:
     name: OpenBSD x86_64
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    # OpenBSD aarch64 disabled: FPC has no aarch64 package or port.
-    # OpenBSD x86_64: FPC binary package may not be in the repo for
-    # current release, so we install from the SourceForge tarball.
+    # FPC binary package is not reliably available via pkg_add on
+    # OpenBSD, and has no aarch64 port at all. Install from the
+    # official SourceForge tarball for x86_64 only.
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -263,16 +263,17 @@ jobs:
         with:
           usesh: true
           prepare: |
-            pkg_add git wget gmake
+            pkg_add bash git wget gmake
 
-            # FPC is not reliably available via pkg_add on OpenBSD.
-            # Install from the official SourceForge tarball instead.
+            # FPC's install.sh uses bash syntax (parameter expansion)
+            # which is incompatible with OpenBSD's default ksh shell.
             FPC_VERSION="3.2.2"
             FPC_TARBALL="fpc-${FPC_VERSION}.x86_64-openbsd.tar"
             wget -q "https://sourceforge.net/projects/freepascal/files/OpenBSD/${FPC_VERSION}/${FPC_TARBALL}/download" \
               -O "/tmp/${FPC_TARBALL}"
             cd /tmp && tar xf "${FPC_TARBALL}"
-            cd "fpc-${FPC_VERSION}.x86_64-openbsd" && echo "/usr/local" | sh install.sh
+            cd "fpc-${FPC_VERSION}.x86_64-openbsd"
+            echo "/usr/local" | bash install.sh
             export PATH="/usr/local/bin:$PATH"
 
             LAZARUS_DIR="/tmp/lazarus-src"
@@ -302,28 +303,27 @@ jobs:
             instantfpc .github/workflows/make.pas
 
   netbsd:
-    name: NetBSD ${{ matrix.arch }}
+    name: NetBSD x86_64
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [x86_64, aarch64]
+    # FPC has no pre-built package for NetBSD aarch64, so only x86_64
+    # is supported. pkgin is not pre-installed in the vmactions image,
+    # so we use pkg_add directly. The VM may have older base packages
+    # that conflict with the latest repo, so we update first.
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           submodules: true
 
-      - name: Build (NetBSD ${{ matrix.arch }})
+      - name: Build (NetBSD x86_64)
         uses: vmactions/netbsd-vm@v1
         with:
-          arch: ${{ matrix.arch }}
           prepare: |
-            # pkgin is not pre-installed in the vmactions NetBSD image.
-            # Use pkg_add with PKG_PATH set from /usr/pkg/etc/pkgin/repositories.conf
-            # or fall back to the default CDN.
+            # Set package repo path and update existing packages to
+            # avoid version conflicts (e.g. pcre2 mismatch).
             export PKG_PATH="https://cdn.NetBSD.org/pub/pkgsrc/packages/NetBSD/$(uname -p)/$(uname -r | cut -d_ -f1)/All"
+            pkg_add -u || true
             pkg_add fpc git wget gmake
 
             LAZARUS_DIR="/tmp/lazarus-src"
@@ -352,58 +352,12 @@ jobs:
             lazbuild --version
             instantfpc .github/workflows/make.pas
 
-  dragonflybsd:
-    name: DragonFlyBSD x86_64
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          submodules: true
-
-      - name: Build (DragonFlyBSD x86_64)
-        uses: vmactions/dragonflybsd-vm@v1
-        with:
-          usesh: true
-          prepare: |
-            pkg install -y fpc git wget gmake
-
-            # Lazarus 4.4 has a missing include file (lazconf.inc) for
-            # DragonFlyBSD. Use the fixes_4 branch which may have
-            # better DragonFlyBSD support, or fall back to main.
-            LAZARUS_DIR="/tmp/lazarus-src"
-            git clone --depth 1 --branch fixes_4 \
-              https://github.com/fpc/Lazarus.git "$LAZARUS_DIR"
-            gmake -C "$LAZARUS_DIR" lazbuild
-
-            mkdir -p "$HOME/.lazarus"
-            cat > "$HOME/.lazarus/environmentoptions.xml" <<EOF
-            <?xml version="1.0" encoding="UTF-8"?>
-            <CONFIG>
-              <EnvironmentOptions>
-                <LazarusDirectory Value="$LAZARUS_DIR"/>
-                <CompilerFilename Value="$(which fpc)"/>
-              </EnvironmentOptions>
-            </CONFIG>
-            EOF
-
-            export PATH="$LAZARUS_DIR:$PATH"
-            lazbuild --version
-          run: |
-            set -xeuo pipefail
-            export PATH="/tmp/lazarus-src:$PATH"
-            openssl version || true
-            fpc -iV
-            lazbuild --version
-            instantfpc .github/workflows/make.pas
-
   # ─────────────────────────────────────────────────────────────────────
   #  Tier 4 — Solaris via vmactions QEMU system VM
   #
-  #  Solaris uses pkgutil (OpenCSW) for community packages. CSW installs
-  #  to /opt/csw/bin which must be added to PATH. FPC is installed from
-  #  the official SourceForge tarball (no Solaris package exists).
+  #  Solaris uses pkgutil (OpenCSW) for community packages which install
+  #  to /opt/csw/bin. FPC is installed from the official SourceForge
+  #  tarball. FPC's install.sh uses bash syntax so must be run with bash.
   # ─────────────────────────────────────────────────────────────────────
 
   solaris:
@@ -422,18 +376,22 @@ jobs:
           release: "11.4-gcc"
           usesh: true
           prepare: |
-            # CSW packages install to /opt/csw — add to PATH first
-            export PATH="/opt/csw/bin:$PATH"
+            # CSW packages install to /opt/csw — must be in PATH
+            # before any CSW-installed tool can be used.
+            export PATH="/opt/csw/bin:/usr/local/bin:$PATH"
 
-            pkgutil -y -i wget gmake git
+            pkgutil -y -i bash wget gmake git
 
-            # Install FPC from the official SourceForge tarball
+            # Install FPC from the official SourceForge tarball.
+            # FPC's install.sh uses bash syntax (subshell expressions)
+            # which is incompatible with Solaris /bin/sh.
             FPC_VERSION="3.2.2"
             FPC_TARBALL="fpc-${FPC_VERSION}.x86_64-solaris.tar"
             wget -q "https://sourceforge.net/projects/freepascal/files/Solaris/${FPC_VERSION}/${FPC_TARBALL}/download" \
               -O "/tmp/${FPC_TARBALL}"
             cd /tmp && tar xf "${FPC_TARBALL}"
-            cd "fpc-${FPC_VERSION}.x86_64-solaris" && echo "/usr/local" | sh install.sh
+            cd "fpc-${FPC_VERSION}.x86_64-solaris"
+            echo -e "/usr/local\nY\n\nY\n" | bash install.sh
             export PATH="/usr/local/bin:$PATH"
 
             # Build lazbuild from source

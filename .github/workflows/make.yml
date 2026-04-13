@@ -316,9 +316,9 @@ jobs:
           prepare: |
             pkg install -y fpc git wget gmake
 
-            # Optional: DPorts OpenSSL for FPC's HTTPS (make.pas). If the
-            # solver refuses, prepare still succeeds; run uses base LibreSSL.
-            pkg install -y openssl || true
+            # Do not run a second `pkg install openssl`: on DragonFly it can
+            # trigger a solver pass that upgrades openssl and removes git,
+            # wget, curl, rsync, etc., breaking the rest of prepare.
 
             LAZARUS_DIR="/tmp/lazarus-src"
             git clone --depth 1 --branch lazarus_4_4 \
@@ -362,10 +362,10 @@ jobs:
             cat "$RNEW" > "$RC"
             rm -f "$RNEW"
 
-            # Prefer DPorts OpenSSL when prepare installed it (run is a
-            # separate SSH session — repeat LD_LIBRARY_PATH here).
-            export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"
+            # If the image already has DPorts OpenSSL under /usr/local/lib,
+            # prefer it for FPC (separate SSH session from prepare).
             if ls /usr/local/lib/libssl.so.* >/dev/null 2>&1; then
+              export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"
               SSL_SO=$(ls -t /usr/local/lib/libssl.so.* 2>/dev/null | head -1)
               CRYPTO_SO=$(ls -t /usr/local/lib/libcrypto.so.* 2>/dev/null | head -1)
               [ -n "$SSL_SO" ] && ln -sf "$SSL_SO" /usr/local/lib/libssl.so.1.1 || true

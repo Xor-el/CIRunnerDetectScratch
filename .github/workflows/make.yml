@@ -392,12 +392,27 @@ jobs:
             command -v fpc 2>&1 || true
             echo '### end pre-flight ###'
 
-            # make.pas uses TFPHttpClient + OpenSSL. If LD_LIBRARY_PATH or
-            # LD_PRELOAD points at /usr/local (DPorts), the dynamic linker
-            # can load the wrong NSS or libc-adjacent shims and libc
-            # getaddrinfo() fails for github.com while shell tools still work.
-            # Clear them only for instantfpc — not a hosts-file hack, works for
-            # any host TFPHttpClient resolves.
+            # FPC netdb (default on DragonFly): THostResolver uses GetHostByName
+            # first, which only reads /etc/hosts — not libc DNS. If the name is
+            # missing, ResolveHostByName runs FPC's internal UDP resolver, which
+            # can fail in this VM while host(1)/getent (libc) succeed. Seed
+            # /etc/hosts with IPv4 from host(1) so GetHostByName succeeds for
+            # TFPHttpClient (make.pas). IPs come from live DNS, not constants.
+            for h in github.com codeload.github.com packages.lazarus-ide.org; do
+              ip=$(host -t A "$h" 2>/dev/null | awk '/has.*address/ {print $NF; exit}')
+              [ -z "$ip" ] && continue
+              case "$ip" in *:*) continue;; esac
+              grep -qFx "$ip $h" /etc/hosts 2>/dev/null && continue
+              echo "$ip $h" >> /etc/hosts
+            done
+            echo '### /etc/hosts (tail) after IPv4 seed ###'
+            tail -n 30 /etc/hosts 2>&1 || true
+            echo '### getent hosts after seed (sanity: same libc view FPC hosts-read mimics) ###'
+            getent hosts github.com 2>&1 || true
+            getent hosts codeload.github.com 2>&1 || true
+            getent hosts packages.lazarus-ide.org 2>&1 || true
+
+            # Clear inherited LD_* before instantfpc (harmless when unset).
             unset LD_LIBRARY_PATH LD_PRELOAD
             echo "### after unset: LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-<unset>} LD_PRELOAD=${LD_PRELOAD:-<unset>} ###"
             instantfpc .github/workflows/make.pas || {

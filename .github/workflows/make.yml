@@ -187,114 +187,182 @@ jobs:
   #  GNU make is required on all BSDs (native make is BSD make).
   # ─────────────────────────────────────────────────────────────────────
 
-  bsd:
-    name: ${{ matrix.name }}
+  freebsd:
+    name: FreeBSD ${{ matrix.arch }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
         include:
-          # ── FreeBSD ──────────────────────────────────────────────
-          - name: FreeBSD x86_64
-            vm: freebsd
-            release: "15.0"
-            arch: x86_64
-            fpc_install: "pkg install -y fpc"
-            deps_install: "pkg install -y git wget gmake"
-            make_cmd: gmake
-            shell_flag: true
+          - arch: x86_64
+            fpc_pkg: fpc
 
           # Disabled: fpc-devel on aarch64 is experimental, re-enable
           # when stable fpc lands in the FreeBSD aarch64 package repo.
-          #- name: FreeBSD AArch64
-          #  vm: freebsd
-          #  release: "15.0"
-          #  arch: aarch64
-          #  fpc_install: "pkg install -y fpc-devel"
-          #  deps_install: "pkg install -y git wget gmake"
-          #  make_cmd: gmake
-          #  shell_flag: true
-
-          # ── OpenBSD ─────────────────────────────────────────────
-          - name: OpenBSD x86_64
-            vm: openbsd
-            release: ""
-            arch: x86_64
-            fpc_install: "pkg_add fpc"
-            deps_install: "pkg_add git wget gmake"
-            make_cmd: gmake
-            shell_flag: true
-
-          - name: OpenBSD AArch64
-            vm: openbsd
-            release: ""
-            arch: aarch64
-            fpc_install: "pkg_add fpc"
-            deps_install: "pkg_add git wget gmake"
-            make_cmd: gmake
-            shell_flag: true
-
-          # ── NetBSD ──────────────────────────────────────────────
-          - name: NetBSD x86_64
-            vm: netbsd
-            release: ""
-            arch: x86_64
-            fpc_install: "pkgin -y install fpc"
-            deps_install: "pkgin -y install git wget gmake"
-            make_cmd: gmake
-            shell_flag: false
-
-          - name: NetBSD AArch64
-            vm: netbsd
-            release: ""
-            arch: aarch64
-            fpc_install: "pkgin -y install fpc"
-            deps_install: "pkgin -y install git wget gmake"
-            make_cmd: gmake
-            shell_flag: false
-
-          # ── DragonFlyBSD ────────────────────────────────────────
-          - name: DragonFlyBSD x86_64
-            vm: dragonflybsd
-            release: ""
-            arch: x86_64
-            fpc_install: "pkg install -y fpc"
-            deps_install: "pkg install -y git wget gmake"
-            make_cmd: gmake
-            shell_flag: true
-
+          #- arch: aarch64
+          #  fpc_pkg: fpc-devel
     env:
-      FPC_INSTALL: ${{ matrix.fpc_install }}
-      DEPS_INSTALL: ${{ matrix.deps_install }}
-      MAKE_CMD: ${{ matrix.make_cmd }}
-      LAZARUS_BRANCH_ENV: lazarus_4_4
-      LAZARUS_REPO_ENV: https://github.com/fpc/Lazarus.git
+      FPC_PKG: ${{ matrix.fpc_pkg }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           submodules: true
 
-      - name: Build (${{ matrix.name }})
-        uses: vmactions/${{ matrix.vm }}-vm@v1
+      - name: Build (FreeBSD ${{ matrix.arch }})
+        uses: vmactions/freebsd-vm@v1
         with:
-          release: ${{ matrix.release || '' }}
+          release: "15.0"
           arch: ${{ matrix.arch }}
-          usesh: ${{ matrix.shell_flag }}
-          envs: 'FPC_INSTALL DEPS_INSTALL MAKE_CMD LAZARUS_BRANCH_ENV LAZARUS_REPO_ENV'
+          usesh: true
+          envs: 'FPC_PKG'
           prepare: |
-            # Install FPC and build dependencies
-            $FPC_INSTALL
-            $DEPS_INSTALL
+            pkg install -y $FPC_PKG git wget gmake
 
-            # Build lazbuild from source
             LAZARUS_DIR="/tmp/lazarus-src"
-            git clone --depth 1 --branch "$LAZARUS_BRANCH_ENV" \
-              "$LAZARUS_REPO_ENV" "$LAZARUS_DIR"
-            $MAKE_CMD -C "$LAZARUS_DIR" lazbuild
+            git clone --depth 1 --branch lazarus_4_4 \
+              https://github.com/fpc/Lazarus.git "$LAZARUS_DIR"
+            gmake -C "$LAZARUS_DIR" lazbuild
 
-            # Configure lazbuild to find Lazarus source tree
+            mkdir -p "$HOME/.lazarus"
+            cat > "$HOME/.lazarus/environmentoptions.xml" <<EOF
+            <?xml version="1.0" encoding="UTF-8"?>
+            <CONFIG>
+              <EnvironmentOptions>
+                <LazarusDirectory Value="$LAZARUS_DIR"/>
+                <CompilerFilename Value="$(which fpc)"/>
+              </EnvironmentOptions>
+            </CONFIG>
+            EOF
+
+            export PATH="$LAZARUS_DIR:$PATH"
+            lazbuild --version
+          run: |
+            set -xeuo pipefail
+            export PATH="/tmp/lazarus-src:$PATH"
+            openssl version || true
+            fpc -iV
+            lazbuild --version
+            instantfpc .github/workflows/make.pas
+
+  openbsd:
+    name: OpenBSD ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - name: Build (OpenBSD ${{ matrix.arch }})
+        uses: vmactions/openbsd-vm@v1
+        with:
+          arch: ${{ matrix.arch }}
+          usesh: true
+          prepare: |
+            pkg_add fpc git wget gmake
+
+            LAZARUS_DIR="/tmp/lazarus-src"
+            git clone --depth 1 --branch lazarus_4_4 \
+              https://github.com/fpc/Lazarus.git "$LAZARUS_DIR"
+            gmake -C "$LAZARUS_DIR" lazbuild
+
+            mkdir -p "$HOME/.lazarus"
+            cat > "$HOME/.lazarus/environmentoptions.xml" <<EOF
+            <?xml version="1.0" encoding="UTF-8"?>
+            <CONFIG>
+              <EnvironmentOptions>
+                <LazarusDirectory Value="$LAZARUS_DIR"/>
+                <CompilerFilename Value="$(which fpc)"/>
+              </EnvironmentOptions>
+            </CONFIG>
+            EOF
+
+            export PATH="$LAZARUS_DIR:$PATH"
+            lazbuild --version
+          run: |
+            set -xeuo pipefail
+            export PATH="/tmp/lazarus-src:$PATH"
+            openssl version || true
+            fpc -iV
+            lazbuild --version
+            instantfpc .github/workflows/make.pas
+
+  netbsd:
+    name: NetBSD ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - name: Build (NetBSD ${{ matrix.arch }})
+        uses: vmactions/netbsd-vm@v1
+        with:
+          arch: ${{ matrix.arch }}
+          prepare: |
+            pkgin -y install fpc git wget gmake
+
+            LAZARUS_DIR="/tmp/lazarus-src"
+            git clone --depth 1 --branch lazarus_4_4 \
+              https://github.com/fpc/Lazarus.git "$LAZARUS_DIR"
+            gmake -C "$LAZARUS_DIR" lazbuild
+
+            mkdir -p "$HOME/.lazarus"
+            cat > "$HOME/.lazarus/environmentoptions.xml" <<EOF
+            <?xml version="1.0" encoding="UTF-8"?>
+            <CONFIG>
+              <EnvironmentOptions>
+                <LazarusDirectory Value="$LAZARUS_DIR"/>
+                <CompilerFilename Value="$(which fpc)"/>
+              </EnvironmentOptions>
+            </CONFIG>
+            EOF
+
+            export PATH="$LAZARUS_DIR:$PATH"
+            lazbuild --version
+          run: |
+            set -xeuo pipefail
+            export PATH="/tmp/lazarus-src:$PATH"
+            openssl version || true
+            fpc -iV
+            lazbuild --version
+            instantfpc .github/workflows/make.pas
+
+  dragonflybsd:
+    name: DragonFlyBSD x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - name: Build (DragonFlyBSD x86_64)
+        uses: vmactions/dragonflybsd-vm@v1
+        with:
+          usesh: true
+          prepare: |
+            pkg install -y fpc git wget gmake
+
+            LAZARUS_DIR="/tmp/lazarus-src"
+            git clone --depth 1 --branch lazarus_4_4 \
+              https://github.com/fpc/Lazarus.git "$LAZARUS_DIR"
+            gmake -C "$LAZARUS_DIR" lazbuild
+
             mkdir -p "$HOME/.lazarus"
             cat > "$HOME/.lazarus/environmentoptions.xml" <<EOF
             <?xml version="1.0" encoding="UTF-8"?>

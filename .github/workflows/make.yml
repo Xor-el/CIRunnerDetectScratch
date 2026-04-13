@@ -362,24 +362,49 @@ jobs:
             cat "$RNEW" > "$RC"
             rm -f "$RNEW"
 
-            # If the image already has DPorts OpenSSL under /usr/local/lib,
-            # prefer it for FPC (separate SSH session from prepare).
-            if ls /usr/local/lib/libssl.so.* >/dev/null 2>&1; then
-              export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"
-              SSL_SO=$(ls -t /usr/local/lib/libssl.so.* 2>/dev/null | head -1)
-              CRYPTO_SO=$(ls -t /usr/local/lib/libcrypto.so.* 2>/dev/null | head -1)
-              [ -n "$SSL_SO" ] && ln -sf "$SSL_SO" /usr/local/lib/libssl.so.1.1 || true
-              [ -n "$CRYPTO_SO" ] && ln -sf "$CRYPTO_SO" /usr/local/lib/libcrypto.so.1.1 || true
-            fi
-
-            # Base LibreSSL: FPC often loads libssl.so.1.1 / libcrypto.so.1.1.
+            # Base LibreSSL: FPC's openssl unit often loads libssl.so.1.1 names.
             ln -sf /usr/lib/libssl.so /usr/lib/libssl.so.1.1 || true
             ln -sf /usr/lib/libcrypto.so /usr/lib/libcrypto.so.1.1 || true
 
             openssl version || true
             fpc -iV
             lazbuild --version
-            instantfpc .github/workflows/make.pas || { sleep 5; instantfpc .github/workflows/make.pas; }
+
+            # One block: everything relevant to TFPHttpClient / instantfpc DNS + linker.
+            echo '### DragonFly make.pas pre-flight (single dump) ###'
+            echo "uname: $(uname -a)"
+            phead=$(echo "$PATH" | cut -c1-240)
+            echo "PATH_head: ${phead}..."
+            echo "LD_LIBRARY_PATH(before_unset)=${LD_LIBRARY_PATH:-<unset>}"
+            echo "LD_PRELOAD(before_unset)=${LD_PRELOAD:-<unset>}"
+            echo '--- /etc/resolv.conf ---'
+            cat /etc/resolv.conf 2>&1 || true
+            echo '--- host github.com ---'
+            host github.com 2>&1 || true
+            echo '--- host codeload.github.com ---'
+            host codeload.github.com 2>&1 || true
+            echo '--- host packages.lazarus-ide.org ---'
+            host packages.lazarus-ide.org 2>&1 || true
+            echo '--- getent hosts github.com (if available) ---'
+            getent hosts github.com 2>&1 || true
+            echo '--- instantfpc fpc (command -v) ---'
+            command -v instantfpc 2>&1 || true
+            command -v fpc 2>&1 || true
+            echo '### end pre-flight ###'
+
+            # make.pas uses TFPHttpClient + OpenSSL. If LD_LIBRARY_PATH or
+            # LD_PRELOAD points at /usr/local (DPorts), the dynamic linker
+            # can load the wrong NSS or libc-adjacent shims and libc
+            # getaddrinfo() fails for github.com while shell tools still work.
+            # Clear them only for instantfpc — not a hosts-file hack, works for
+            # any host TFPHttpClient resolves.
+            unset LD_LIBRARY_PATH LD_PRELOAD
+            echo "### after unset: LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-<unset>} LD_PRELOAD=${LD_PRELOAD:-<unset>} ###"
+            instantfpc .github/workflows/make.pas || {
+              sleep 5
+              unset LD_LIBRARY_PATH LD_PRELOAD
+              instantfpc .github/workflows/make.pas
+            }
 
   # ─────────────────────────────────────────────────────────────────────
   #  Tier 4 — Solaris via vmactions QEMU system VM

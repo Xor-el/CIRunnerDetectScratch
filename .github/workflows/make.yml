@@ -316,11 +316,9 @@ jobs:
           prepare: |
             pkg install -y fpc git wget gmake
 
-            # DragonFlyBSD ships LibreSSL in base. Real OpenSSL packages
-            # (openssl31/32/33) conflict with LibreSSL so we cannot
-            # install them. FPC's openssl unit partially works with
-            # LibreSSL for basic TLS. The main issue is DNS resolution
-            # in the run step — ensure resolv.conf is correct.
+            # Optional: DPorts OpenSSL for FPC's HTTPS (make.pas). If the
+            # solver refuses, prepare still succeeds; run uses base LibreSSL.
+            pkg install -y openssl || true
 
             LAZARUS_DIR="/tmp/lazarus-src"
             git clone --depth 1 --branch lazarus_4_4 \
@@ -352,23 +350,36 @@ jobs:
             set -xeuo pipefail
             export PATH="/tmp/lazarus-src:$PATH"
 
-            # Ensure DNS works in the run step (vmactions VMs can
-            # lose resolv.conf between prepare and run).
-            if ! host github.com >/dev/null 2>&1; then
-              echo "nameserver 8.8.8.8" >> /etc/resolv.conf
-              echo "nameserver 1.1.1.1" >> /etc/resolv.conf
+            # Always prepend public DNS: host(1) can succeed while libc
+            # resolution still fails for TFPHttpClient (separate session
+            # from prepare; transient VM DNS).
+            RC=/etc/resolv.conf
+            RNEW=$(mktemp)
+            {
+              printf '%s\n' 'nameserver 8.8.8.8' 'nameserver 1.1.1.1'
+              [ -f "$RC" ] && cat "$RC"
+            } > "$RNEW"
+            cat "$RNEW" > "$RC"
+            rm -f "$RNEW"
+
+            # Prefer DPorts OpenSSL when prepare installed it (run is a
+            # separate SSH session — repeat LD_LIBRARY_PATH here).
+            export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"
+            if ls /usr/local/lib/libssl.so.* >/dev/null 2>&1; then
+              SSL_SO=$(ls -t /usr/local/lib/libssl.so.* 2>/dev/null | head -1)
+              CRYPTO_SO=$(ls -t /usr/local/lib/libcrypto.so.* 2>/dev/null | head -1)
+              [ -n "$SSL_SO" ] && ln -sf "$SSL_SO" /usr/local/lib/libssl.so.1.1 || true
+              [ -n "$CRYPTO_SO" ] && ln -sf "$CRYPTO_SO" /usr/local/lib/libcrypto.so.1.1 || true
             fi
 
-            # DragonFlyBSD base ships LibreSSL. FPC's openssl unit
-            # looks for libssl.so / libcrypto.so which resolve to
-            # LibreSSL. Symlink versioned names so FPC can load them.
+            # Base LibreSSL: FPC often loads libssl.so.1.1 / libcrypto.so.1.1.
             ln -sf /usr/lib/libssl.so /usr/lib/libssl.so.1.1 || true
             ln -sf /usr/lib/libcrypto.so /usr/lib/libcrypto.so.1.1 || true
 
             openssl version || true
             fpc -iV
             lazbuild --version
-            instantfpc .github/workflows/make.pas
+            instantfpc .github/workflows/make.pas || { sleep 5; instantfpc .github/workflows/make.pas; }
 
   # ─────────────────────────────────────────────────────────────────────
   #  Tier 4 — Solaris via vmactions QEMU system VM

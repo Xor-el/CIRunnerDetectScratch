@@ -211,6 +211,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     name: Linux ARMv7 (QEMU)
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout
         uses: actions/checkout@v6

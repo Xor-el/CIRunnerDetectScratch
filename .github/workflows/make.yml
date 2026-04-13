@@ -189,8 +189,6 @@ jobs:
   #    - FreeBSD aarch64: fpc-devel exists but is experimental.
   #    - OpenBSD: pre-built FPC binary links against older libc;
   #      incompatible with current OpenBSD. No usable package either.
-  #    - DragonFlyBSD: Lazarus has no DragonFlyBSD support
-  #      (lazconf.inc missing), so lazbuild cannot be built.
   #    - NetBSD aarch64: no FPC package available.
   # ─────────────────────────────────────────────────────────────────────
 
@@ -293,6 +291,60 @@ jobs:
           run: |
             set -xeuo pipefail
             export PATH="/tmp/lazarus-src:/usr/pkg/bin:$PATH"
+            openssl version || true
+            fpc -iV
+            lazbuild --version
+            instantfpc .github/workflows/make.pas
+
+  dragonflybsd:
+    name: DragonFlyBSD x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # Lazarus has no DragonFlyBSD lazconf.inc, but DragonFlyBSD is a
+    # FreeBSD derivative so the FreeBSD include works as-is. We patch
+    # it in after cloning the Lazarus source.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - name: Build (DragonFlyBSD x86_64)
+        uses: vmactions/dragonflybsd-vm@v1
+        with:
+          usesh: true
+          prepare: |
+            pkg install -y fpc git wget gmake
+
+            LAZARUS_DIR="/tmp/lazarus-src"
+            git clone --depth 1 --branch lazarus_4_4 \
+              https://github.com/fpc/Lazarus.git "$LAZARUS_DIR"
+
+            # Lazarus is missing include/dragonfly/lazconf.inc.
+            # DragonFlyBSD is a FreeBSD derivative, so the FreeBSD
+            # version works as-is.
+            mkdir -p "$LAZARUS_DIR/ide/packages/ideconfig/include/dragonfly"
+            cp "$LAZARUS_DIR/ide/packages/ideconfig/include/freebsd/lazconf.inc" \
+               "$LAZARUS_DIR/ide/packages/ideconfig/include/dragonfly/lazconf.inc"
+
+            gmake -C "$LAZARUS_DIR" lazbuild
+
+            mkdir -p "$HOME/.lazarus"
+            cat > "$HOME/.lazarus/environmentoptions.xml" <<EOF
+            <?xml version="1.0" encoding="UTF-8"?>
+            <CONFIG>
+              <EnvironmentOptions>
+                <LazarusDirectory Value="$LAZARUS_DIR"/>
+                <CompilerFilename Value="$(which fpc)"/>
+              </EnvironmentOptions>
+            </CONFIG>
+            EOF
+
+            export PATH="$LAZARUS_DIR:$PATH"
+            lazbuild --version
+          run: |
+            set -xeuo pipefail
+            export PATH="/tmp/lazarus-src:$PATH"
             openssl version || true
             fpc -iV
             lazbuild --version

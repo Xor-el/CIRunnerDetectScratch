@@ -11,6 +11,52 @@ implementation
 uses
   SysUtils, Classes, Process, HlpSimdLevels, HlpCpuFeatures;
 
+const
+  NetColUnavailable = '(unavailable)';
+
+function TrimProbeLog(const S: string): string;
+const
+  MaxLines = 40;
+  MaxChars = 8000;
+var
+  SL: TStringList;
+  I: Integer;
+  Line, Sep: string;
+begin
+  Result := '';
+  if S = '' then
+    Exit;
+  SL := TStringList.Create;
+  try
+    SL.Text := S;
+    for I := 0 to SL.Count - 1 do
+    begin
+      if I >= MaxLines then
+      begin
+        if Result <> '' then
+          Result := Result + LineEnding;
+        Result := Result + '[... truncated ...]';
+        Break;
+      end;
+      Line := SL[I];
+      if Result = '' then
+        Sep := ''
+      else
+        Sep := LineEnding;
+      if Length(Result) + Length(Sep) + Length(Line) > MaxChars then
+      begin
+        if Result <> '' then
+          Result := Result + LineEnding;
+        Result := Result + '[... truncated ...]';
+        Break;
+      end;
+      Result := Result + Sep + Line;
+    end;
+  finally
+    SL.Free;
+  end;
+end;
+
 function FindCpuProbeCsProj: string;
 const
   RelPaths: array[0..2] of string = (
@@ -194,12 +240,14 @@ begin
   WriteLn(Format('%-24s %14s %14s %10s', [AFeature, AHash, ANet, AMatch]));
 end;
 
-procedure Summarize(const Mis: TStrings);
+procedure Summarize(const Mis: TStrings; const DotNetProbeOk: Boolean);
 var
   I: Integer;
 begin
   WriteLn('');
-  if Mis.Count = 0 then
+  if not DotNetProbeOk then
+    WriteLn('Summary: .NET probe unavailable; HashLib-only rows above.')
+  else if Mis.Count = 0 then
     WriteLn('Summary: all comparable features match.')
   else
   begin
@@ -215,7 +263,7 @@ begin
 end;
 
 {$IFDEF HASHLIB_X86}
-procedure ReportX86(const Lines: TStrings);
+procedure ReportX86(const Lines: TStrings; const DotNetProbeOk: Boolean);
 var
   Mis: TStringList;
   HL, NL: string;
@@ -224,10 +272,15 @@ var
   var
     N: Integer;
   begin
-    N := NativeInt(Lines, Key);
-    PrintRow(Title, BoolTxt(HB), NativeBoolTxt(N), MatchTxt(HB, N));
-    if not ComparableMatch(HB, N) then
-      Mis.Add(Title);
+    if not DotNetProbeOk then
+      PrintRow(Title, BoolTxt(HB), NetColUnavailable, '-')
+    else
+    begin
+      N := NativeInt(Lines, Key);
+      PrintRow(Title, BoolTxt(HB), NativeBoolTxt(N), MatchTxt(HB, N));
+      if not ComparableMatch(HB, N) then
+        Mis.Add(Title);
+    end;
   end;
 
 begin
@@ -235,15 +288,20 @@ begin
   try
     PrintHeader;
     HL := X86LevelToStr(TCpuFeatures.X86.GetActiveSimdLevel());
-    NL := NativeValueStr(Lines, 'SIMDLVL');
-    if NL = '' then
-      NL := '(missing)';
-    if SameText(HL, NL) then
-      PrintRow('Simd level', HL, NL, 'yes')
+    if not DotNetProbeOk then
+      PrintRow('Simd level', HL, NetColUnavailable, '-')
     else
     begin
-      PrintRow('Simd level', HL, NL, 'NO');
-      Mis.Add('Simd level');
+      NL := NativeValueStr(Lines, 'SIMDLVL');
+      if NL = '' then
+        NL := '(missing)';
+      if SameText(HL, NL) then
+        PrintRow('Simd level', HL, NL, 'yes')
+      else
+      begin
+        PrintRow('Simd level', HL, NL, 'NO');
+        Mis.Add('Simd level');
+      end;
     end;
 
     RowBool('SSE2', 'SSE2', TCpuFeatures.X86.HasSSE2());
@@ -254,7 +312,7 @@ begin
     RowBool('AES-NI', 'AESNI', TCpuFeatures.X86.HasAESNI());
     RowBool('SHA-NI (Intel)', 'SHANI', TCpuFeatures.X86.HasSHANI());
 
-    Summarize(Mis);
+    Summarize(Mis, DotNetProbeOk);
   finally
     Mis.Free;
   end;
@@ -262,7 +320,7 @@ end;
 {$ENDIF}
 
 {$IFDEF HASHLIB_ARM}
-procedure ReportArm(const Lines: TStrings);
+procedure ReportArm(const Lines: TStrings; const DotNetProbeOk: Boolean);
 var
   Mis: TStringList;
   HL, NL: string;
@@ -271,10 +329,15 @@ var
   var
     N: Integer;
   begin
-    N := NativeInt(Lines, Key);
-    PrintRow(Title, BoolTxt(HB), NativeBoolTxt(N), MatchTxt(HB, N));
-    if not ComparableMatch(HB, N) then
-      Mis.Add(Title);
+    if not DotNetProbeOk then
+      PrintRow(Title, BoolTxt(HB), NetColUnavailable, '-')
+    else
+    begin
+      N := NativeInt(Lines, Key);
+      PrintRow(Title, BoolTxt(HB), NativeBoolTxt(N), MatchTxt(HB, N));
+      if not ComparableMatch(HB, N) then
+        Mis.Add(Title);
+    end;
   end;
 
 begin
@@ -282,15 +345,20 @@ begin
   try
     PrintHeader;
     HL := ArmLevelToStr(TCpuFeatures.Arm.GetActiveSimdLevel());
-    NL := NativeValueStr(Lines, 'SIMDLVL');
-    if NL = '' then
-      NL := '(missing)';
-    if SameText(HL, NL) then
-      PrintRow('Simd level', HL, NL, 'yes')
+    if not DotNetProbeOk then
+      PrintRow('Simd level', HL, NetColUnavailable, '-')
     else
     begin
-      PrintRow('Simd level', HL, NL, 'NO');
-      Mis.Add('Simd level');
+      NL := NativeValueStr(Lines, 'SIMDLVL');
+      if NL = '' then
+        NL := '(missing)';
+      if SameText(HL, NL) then
+        PrintRow('Simd level', HL, NL, 'yes')
+      else
+      begin
+        PrintRow('Simd level', HL, NL, 'NO');
+        Mis.Add('Simd level');
+      end;
     end;
 
     RowBool('NEON', 'NEON', TCpuFeatures.Arm.HasNEON());
@@ -304,7 +372,7 @@ begin
     RowBool('CRC32', 'CRC32', TCpuFeatures.Arm.HasCRC32());
     RowBool('PMULL', 'PMULL', TCpuFeatures.Arm.HasPMULL());
 
-    Summarize(Mis);
+    Summarize(Mis, DotNetProbeOk);
   finally
     Mis.Free;
   end;
@@ -316,37 +384,53 @@ var
   ProbePath: string;
   RawOut: AnsiString;
   Lines: TStringList;
-  Ok: Boolean;
+  DotNetProbeOk: Boolean;
+  Preview: string;
 begin
   Lines := TStringList.Create;
   try
+    DotNetProbeOk := False;
+    RawOut := '';
     ProbePath := FindCpuProbeCsProj;
-    if ProbePath = '' then
-    begin
-      WriteLn('CpuProbe.csproj not found (searched upward from ', ParamStr(0), ').');
-      Exit;
-    end;
 
-    Ok := RunCommand('dotnet', ['run', '--project', ProbePath, '-c', 'Release',
-      '--nologo'], RawOut);
-    if not Ok then
+    if ProbePath <> '' then
     begin
-      WriteLn('dotnet run failed for CpuProbe:');
-      WriteLn(string(RawOut));
-      Exit;
+      DotNetProbeOk := RunCommand('dotnet', ['run', '--project', ProbePath, '-c', 'Release',
+        '--nologo'], RawOut);
+      if DotNetProbeOk then
+        CollectDataLines(string(RawOut), Lines)
+      else
+        Lines.Clear;
     end;
-
-    CollectDataLines(string(RawOut), Lines);
 
     WriteLn('--- CIRunnerDetectDemo: HashLib vs .NET intrinsics ---');
-    WriteLn('CpuProbe: ', ProbePath);
+    if ProbePath <> '' then
+      WriteLn('CpuProbe: ', ProbePath)
+    else
+      WriteLn('CpuProbe: (project file not found)');
     WriteLn('');
 
+    if not DotNetProbeOk then
+    begin
+      if ProbePath = '' then
+        WriteLn('.NET CpuProbe: skipped (CpuProbe.csproj not found).')
+      else
+      begin
+        WriteLn('.NET CpuProbe: dotnet run failed. Log excerpt:');
+        Preview := TrimProbeLog(string(RawOut));
+        if Preview <> '' then
+          WriteLn(Preview)
+        else
+          WriteLn('(no output captured)');
+      end;
+      WriteLn('');
+    end;
+
 {$IFDEF HASHLIB_X86}
-    ReportX86(Lines);
+    ReportX86(Lines, DotNetProbeOk);
 {$ELSE}
 {$IFDEF HASHLIB_ARM}
-    ReportArm(Lines);
+    ReportArm(Lines, DotNetProbeOk);
 {$ELSE}
     WriteLn('Neither HASHLIB_X86 nor HASHLIB_ARM is defined for this target.');
 {$ENDIF}

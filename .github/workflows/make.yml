@@ -122,3 +122,93 @@ jobs:
 
           Write-Host "Building make.pas..."
           instantfpc .github/workflows/make.pas
+
+  # ─── FreeBSD (via QEMU VM on ubuntu-latest) ───────────────────────────
+  # .NET SDK from sec/dotnet-core-freebsd-source-build community builds
+  # is only available for x64. The aarch64 job runs without .NET.
+  build-freebsd:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            dotnet_sdk_url: https://github.com/sec/dotnet-core-freebsd-source-build/releases/download/10.0.102-vmr/dotnet-sdk-10.0.102-freebsd-x64.tar.gz
+          - arch: aarch64
+            dotnet_sdk_url: ""
+    name: FreeBSD 15.0 (${{ matrix.arch }})
+    env:
+      DOTNET_SDK_URL: ${{ matrix.dotnet_sdk_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - name: Build on FreeBSD
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: "15.0"
+          arch: ${{ matrix.arch }}
+          usesh: true
+          envs: 'DOTNET_SDK_URL'
+          prepare: |
+            # Install FPC, Lazarus, and .NET runtime dependencies
+            pkg install -y fpc lazarus openssl wget \
+              libunwind icu libinotify
+          run: |
+            set -xeuo pipefail
+
+            # Install .NET SDK if available for this architecture
+            if [ -n "$DOTNET_SDK_URL" ]; then
+              export DOTNET_ROOT="$HOME/.dotnet"
+              mkdir -p "$DOTNET_ROOT"
+              wget -q "$DOTNET_SDK_URL" -O /tmp/dotnet-sdk.tar.gz
+              tar xf /tmp/dotnet-sdk.tar.gz -C "$DOTNET_ROOT"
+              rm /tmp/dotnet-sdk.tar.gz
+              export PATH="$DOTNET_ROOT:$PATH"
+              dotnet --version
+            else
+              echo "NOTE: .NET SDK not available for this architecture, skipping."
+            fi
+
+            openssl version
+            fpc -iV
+            instantfpc .github/workflows/make.pas
+
+  # ─── ARMv7 / Raspberry Pi (via QEMU user-mode on ubuntu-latest) ──────
+  build-armv7:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    name: Linux ARMv7 (Raspberry Pi)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - name: Build on ARMv7
+        uses: uraimo/run-on-arch-action@v3
+        with:
+          arch: armv7
+          distro: ubuntu24.04
+          githubToken: ${{ github.token }}
+          install: |
+            apt-get update
+            apt-get install -y lazarus openssl wget ca-certificates
+
+            # Install .NET SDK for ARM32 via official install script
+            wget -q https://dot.net/v1/dotnet-install.sh -O /tmp/dotnet-install.sh
+            chmod +x /tmp/dotnet-install.sh
+            /tmp/dotnet-install.sh --channel 10.0 --quality ga \
+              --install-dir /usr/share/dotnet
+            ln -sf /usr/share/dotnet/dotnet /usr/bin/dotnet
+          run: |
+            set -xeuo pipefail
+            export DOTNET_ROOT=/usr/share/dotnet
+            export PATH="$PATH:$DOTNET_ROOT"
+            openssl version
+            fpc -iV
+            dotnet --version
+            instantfpc .github/workflows/make.pas

@@ -124,9 +124,9 @@ jobs:
           instantfpc .github/workflows/make.pas
 
   # ─── FreeBSD (via QEMU VM on ubuntu-latest) ───────────────────────────
-  # x86_64: stable fpc + lazarus-gtk2, .NET 10 from community builds.
-  # aarch64: fpc-devel + lazarus-devel (stable fpc not packaged for arm64),
-  #          no .NET (community builds are x64-only).
+  # Install FPC via pkg, build lazbuild from source (same as macOS).
+  # x86_64: stable fpc, .NET 10 from community builds.
+  # aarch64: fpc-devel (stable fpc not packaged for arm64), no .NET.
   build-freebsd:
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -135,15 +135,15 @@ jobs:
       matrix:
         include:
           - arch: x86_64
-            fpc_pkgs: "fpc lazarus-gtk2"
+            fpc_pkg: fpc
             dotnet_sdk_url: https://github.com/sec/dotnet-core-freebsd-source-build/releases/download/10.0.102-vmr/dotnet-sdk-10.0.102-freebsd-x64.tar.gz
           - arch: aarch64
-            fpc_pkgs: "fpc-devel lazarus-devel"
+            fpc_pkg: fpc-devel
             dotnet_sdk_url: ""
     name: FreeBSD 15.0 (${{ matrix.arch }})
     env:
       DOTNET_SDK_URL: ${{ matrix.dotnet_sdk_url }}
-      FPC_PKGS: ${{ matrix.fpc_pkgs }}
+      FPC_PKG: ${{ matrix.fpc_pkg }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -156,14 +156,37 @@ jobs:
           release: "15.0"
           arch: ${{ matrix.arch }}
           usesh: true
-          envs: 'DOTNET_SDK_URL FPC_PKGS'
+          envs: 'DOTNET_SDK_URL FPC_PKG'
           prepare: |
-            # Install FPC/Lazarus (package names differ per arch)
-            # and .NET runtime dependencies
-            pkg install -y $FPC_PKGS wget \
+            # Install FPC (package name differs per arch) and build deps
+            pkg install -y $FPC_PKG git wget gmake \
               libunwind icu libinotify
+
+            # Build lazbuild from source (same approach as macOS)
+            LAZARUS_DIR="/tmp/lazarus-src"
+            git clone --depth 1 --branch lazarus_4_4 \
+              https://github.com/fpc/Lazarus.git "$LAZARUS_DIR"
+            gmake -C "$LAZARUS_DIR" lazbuild
+
+            # Seed lazbuild config so it can find the Lazarus source tree
+            mkdir -p "$HOME/.lazarus"
+            cat > "$HOME/.lazarus/environmentoptions.xml" <<EOF
+            <?xml version="1.0" encoding="UTF-8"?>
+            <CONFIG>
+              <EnvironmentOptions>
+                <LazarusDirectory Value="$LAZARUS_DIR"/>
+                <CompilerFilename Value="$(which fpc)"/>
+              </EnvironmentOptions>
+            </CONFIG>
+            EOF
+
+            export PATH="$LAZARUS_DIR:$PATH"
+            lazbuild --version
           run: |
             set -xeuo pipefail
+
+            # Make lazbuild available in PATH
+            export PATH="/tmp/lazarus-src:$PATH"
 
             # Install .NET SDK if available for this architecture
             if [ -n "$DOTNET_SDK_URL" ]; then
@@ -180,6 +203,7 @@ jobs:
 
             openssl version
             fpc -iV
+            lazbuild --version
             instantfpc .github/workflows/make.pas
 
   # ─── ARMv7 / Raspberry Pi (via QEMU user-mode on ubuntu-latest) ──────

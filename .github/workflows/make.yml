@@ -184,40 +184,33 @@ jobs:
   #
   #  All BSD jobs: build lazbuild from source (Lazarus packages are
   #  unreliable across BSDs). GNU make (gmake) required on all BSDs.
+  #
+  #  Not supported (removed):
+  #    - FreeBSD aarch64: fpc-devel exists but is experimental.
+  #    - OpenBSD: pre-built FPC binary links against older libc;
+  #      incompatible with current OpenBSD. No usable package either.
+  #    - DragonFlyBSD: Lazarus has no DragonFlyBSD support
+  #      (lazconf.inc missing), so lazbuild cannot be built.
+  #    - NetBSD aarch64: no FPC package available.
   # ─────────────────────────────────────────────────────────────────────
 
   freebsd:
-    name: FreeBSD ${{ matrix.arch }}
+    name: FreeBSD x86_64
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x86_64
-            fpc_pkg: fpc
-
-          # Disabled: fpc-devel on aarch64 is experimental, re-enable
-          # when stable fpc lands in the FreeBSD aarch64 package repo.
-          #- arch: aarch64
-          #  fpc_pkg: fpc-devel
-    env:
-      FPC_PKG: ${{ matrix.fpc_pkg }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           submodules: true
 
-      - name: Build (FreeBSD ${{ matrix.arch }})
+      - name: Build (FreeBSD x86_64)
         uses: vmactions/freebsd-vm@v1
         with:
           release: "15.0"
-          arch: ${{ matrix.arch }}
           usesh: true
-          envs: 'FPC_PKG'
           prepare: |
-            pkg install -y $FPC_PKG git wget gmake
+            pkg install -y fpc git wget gmake
 
             LAZARUS_DIR="/tmp/lazarus-src"
             git clone --depth 1 --branch lazarus_4_4 \
@@ -245,71 +238,15 @@ jobs:
             lazbuild --version
             instantfpc .github/workflows/make.pas
 
-  openbsd:
-    name: OpenBSD x86_64
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    # FPC binary package is not reliably available via pkg_add on
-    # OpenBSD, and has no aarch64 port at all. Install from the
-    # official SourceForge tarball for x86_64 only.
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          submodules: true
-
-      - name: Build (OpenBSD x86_64)
-        uses: vmactions/openbsd-vm@v1
-        with:
-          usesh: true
-          prepare: |
-            pkg_add bash git wget gmake
-
-            # FPC's install.sh uses bash syntax (parameter expansion)
-            # which is incompatible with OpenBSD's default ksh shell.
-            FPC_VERSION="3.2.2"
-            FPC_TARBALL="fpc-${FPC_VERSION}.x86_64-openbsd.tar"
-            wget -q "https://sourceforge.net/projects/freepascal/files/OpenBSD/${FPC_VERSION}/${FPC_TARBALL}/download" \
-              -O "/tmp/${FPC_TARBALL}"
-            cd /tmp && tar xf "${FPC_TARBALL}"
-            cd "fpc-${FPC_VERSION}.x86_64-openbsd"
-            echo "/usr/local" | bash install.sh
-            export PATH="/usr/local/bin:$PATH"
-
-            LAZARUS_DIR="/tmp/lazarus-src"
-            git clone --depth 1 --branch lazarus_4_4 \
-              https://github.com/fpc/Lazarus.git "$LAZARUS_DIR"
-            gmake -C "$LAZARUS_DIR" lazbuild
-
-            mkdir -p "$HOME/.lazarus"
-            cat > "$HOME/.lazarus/environmentoptions.xml" <<EOF
-            <?xml version="1.0" encoding="UTF-8"?>
-            <CONFIG>
-              <EnvironmentOptions>
-                <LazarusDirectory Value="$LAZARUS_DIR"/>
-                <CompilerFilename Value="$(which fpc)"/>
-              </EnvironmentOptions>
-            </CONFIG>
-            EOF
-
-            export PATH="$LAZARUS_DIR:$PATH"
-            lazbuild --version
-          run: |
-            set -xeuo pipefail
-            export PATH="/tmp/lazarus-src:/usr/local/bin:$PATH"
-            openssl version || true
-            fpc -iV
-            lazbuild --version
-            instantfpc .github/workflows/make.pas
-
   netbsd:
     name: NetBSD x86_64
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    # FPC has no pre-built package for NetBSD aarch64, so only x86_64
-    # is supported. pkgin is not pre-installed in the vmactions image,
-    # so we use pkg_add directly. The VM may have older base packages
-    # that conflict with the latest repo, so we update first.
+    # pkgin is not pre-installed in the vmactions NetBSD image, so we
+    # use pkg_add directly. The VM ships with slightly older base
+    # packages (e.g. pcre2-10.46) that conflict with the latest repo
+    # (which has git requiring pcre2>=10.47). We force-replace pcre2
+    # first, then install everything else cleanly.
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -320,10 +257,10 @@ jobs:
         uses: vmactions/netbsd-vm@v1
         with:
           prepare: |
-            # Set package repo path and update existing packages to
-            # avoid version conflicts (e.g. pcre2 mismatch).
             export PKG_PATH="https://cdn.NetBSD.org/pub/pkgsrc/packages/NetBSD/$(uname -p)/$(uname -r | cut -d_ -f1)/All"
-            pkg_add -u || true
+
+            # Force-update pcre2 to resolve version conflict with git
+            pkg_add -uu pcre2 || true
             pkg_add fpc git wget gmake
 
             LAZARUS_DIR="/tmp/lazarus-src"

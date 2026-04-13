@@ -32,7 +32,7 @@ type
   class var
     FSysCtlByName: TSysCtlByNameFunc;
 
-  strict private
+  private
     class procedure ResolveDynamicImports(); static;
 
     /// <summary>

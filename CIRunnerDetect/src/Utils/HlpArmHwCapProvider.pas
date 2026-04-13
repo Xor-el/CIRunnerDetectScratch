@@ -93,7 +93,7 @@ type
   class var
     FGetAuxVal: TGetAuxValFunc;
 
-  strict private
+  private
     class procedure ResolveDynamicImports(); static;
 
   public
@@ -110,7 +110,7 @@ type
   class var
     FElfAuxInfo: TElfAuxInfoFunc;
 
-  strict private
+  private
     class procedure ResolveDynamicImports(); static;
 
   public

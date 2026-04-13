@@ -227,6 +227,14 @@ jobs:
             apt-get update
             apt-get install -y lazarus openssl wget ca-certificates
 
+            # FPC 3.2.2 hardcodes libssl.1.1 / libcrypto.1.1 in its
+            # openssl unit, but Ubuntu 24.04 ships OpenSSL 3.x only.
+            # Symlink so FPC can find the libraries.
+            ln -sf /usr/lib/arm-linux-gnueabihf/libssl.so.3 \
+                   /usr/lib/arm-linux-gnueabihf/libssl.so.1.1
+            ln -sf /usr/lib/arm-linux-gnueabihf/libcrypto.so.3 \
+                   /usr/lib/arm-linux-gnueabihf/libcrypto.so.1.1
+
             # Install .NET SDK for ARM32 via official install script
             wget -q https://dot.net/v1/dotnet-install.sh -O /tmp/dotnet-install.sh
             chmod +x /tmp/dotnet-install.sh

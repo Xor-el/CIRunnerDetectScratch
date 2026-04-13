@@ -314,16 +314,13 @@ jobs:
         with:
           usesh: true
           prepare: |
-            pkg install -y fpc git wget gmake openssl
+            pkg install -y fpc git wget gmake
 
-            # DragonFlyBSD ships LibreSSL in base, which is not ABI-
-            # compatible with FPC's openssl unit. Install real OpenSSL
-            # from packages and symlink so FPC can find it.
-            # Unlike the macOS/Linux libssl.1.1 naming issue, this is
-            # a fundamental LibreSSL vs OpenSSL incompatibility and
-            # won't be resolved by FPC 3.2.4+.
-            ln -sf /usr/local/lib/libssl.so /usr/local/lib/libssl.so.1.1
-            ln -sf /usr/local/lib/libcrypto.so /usr/local/lib/libcrypto.so.1.1
+            # DragonFlyBSD ships LibreSSL in base. Real OpenSSL packages
+            # (openssl31/32/33) conflict with LibreSSL so we cannot
+            # install them. FPC's openssl unit partially works with
+            # LibreSSL for basic TLS. The main issue is DNS resolution
+            # in the run step — ensure resolv.conf is correct.
 
             LAZARUS_DIR="/tmp/lazarus-src"
             git clone --depth 1 --branch lazarus_4_4 \
@@ -354,6 +351,20 @@ jobs:
           run: |
             set -xeuo pipefail
             export PATH="/tmp/lazarus-src:$PATH"
+
+            # Ensure DNS works in the run step (vmactions VMs can
+            # lose resolv.conf between prepare and run).
+            if ! host github.com >/dev/null 2>&1; then
+              echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+              echo "nameserver 1.1.1.1" >> /etc/resolv.conf
+            fi
+
+            # DragonFlyBSD base ships LibreSSL. FPC's openssl unit
+            # looks for libssl.so / libcrypto.so which resolve to
+            # LibreSSL. Symlink versioned names so FPC can load them.
+            ln -sf /usr/lib/libssl.so /usr/lib/libssl.so.1.1 || true
+            ln -sf /usr/lib/libcrypto.so /usr/lib/libcrypto.so.1.1 || true
+
             openssl version || true
             fpc -iV
             lazbuild --version

@@ -61,14 +61,17 @@ jobs:
 
           LAZARUS_DIR="/tmp/lazarus-src"
 
-          brew install fpc openssl@3
+          brew install fpc
 
           # macOS runners ship LibreSSL which is incompatible with FPC's
-          # openssl unit. Install real OpenSSL 3 via Homebrew.
-          # FPC 3.2.2 on Darwin tries libssl.1.1.dylib first (hardcoded in
-          # openssl.pas DLLVersions, with unversioned name disabled on Darwin).
-          # Symlink that name to Homebrew's OpenSSL 3 in /usr/local/lib which
-          # is on dyld's default fallback search path.
+          # openssl unit. The runners do have OpenSSL 3 preinstalled via
+          # Homebrew (as a keg-only dependency) but FPC 3.2.2 on Darwin
+          # only tries libssl.1.1.dylib (hardcoded in openssl.pas
+          # DLLVersions, with the unversioned name disabled on Darwin).
+          # Symlink that name to Homebrew's OpenSSL 3 in /usr/local/lib
+          # which is on dyld's default fallback search path.
+          # This hack can be removed once we move to FPC 3.2.4+ which
+          # natively includes '.3' in DLLVersions.
           OSSL_LIB="$(brew --prefix openssl@3)/lib"
           sudo mkdir -p /usr/local/lib
           sudo ln -sf "$OSSL_LIB/libssl.3.dylib"    /usr/local/lib/libssl.1.1.dylib

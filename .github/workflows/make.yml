@@ -124,8 +124,9 @@ jobs:
           instantfpc .github/workflows/make.pas
 
   # ─── FreeBSD (via QEMU VM on ubuntu-latest) ───────────────────────────
-  # .NET SDK from sec/dotnet-core-freebsd-source-build community builds
-  # is only available for x64. The aarch64 job runs without .NET.
+  # x86_64: stable fpc + lazarus-gtk2, .NET 10 from community builds.
+  # aarch64: fpc-devel + lazarus-devel (stable fpc not packaged for arm64),
+  #          no .NET (community builds are x64-only).
   build-freebsd:
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -134,12 +135,15 @@ jobs:
       matrix:
         include:
           - arch: x86_64
+            fpc_pkgs: "fpc lazarus-gtk2"
             dotnet_sdk_url: https://github.com/sec/dotnet-core-freebsd-source-build/releases/download/10.0.102-vmr/dotnet-sdk-10.0.102-freebsd-x64.tar.gz
           - arch: aarch64
+            fpc_pkgs: "fpc-devel lazarus-devel"
             dotnet_sdk_url: ""
     name: FreeBSD 15.0 (${{ matrix.arch }})
     env:
       DOTNET_SDK_URL: ${{ matrix.dotnet_sdk_url }}
+      FPC_PKGS: ${{ matrix.fpc_pkgs }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -152,10 +156,11 @@ jobs:
           release: "15.0"
           arch: ${{ matrix.arch }}
           usesh: true
-          envs: 'DOTNET_SDK_URL'
+          envs: 'DOTNET_SDK_URL FPC_PKGS'
           prepare: |
-            # Install FPC, Lazarus, and .NET runtime dependencies
-            pkg install -y fpc lazarus openssl wget \
+            # Install FPC/Lazarus (package names differ per arch)
+            # and .NET runtime dependencies
+            pkg install -y $FPC_PKGS wget \
               libunwind icu libinotify
           run: |
             set -xeuo pipefail

@@ -210,7 +210,7 @@ jobs:
   build-armv7:
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    name: Linux ARMv7 (Raspberry Pi)
+    name: Linux ARMv7 (QEMU)
     steps:
       - name: Checkout
         uses: actions/checkout@v6

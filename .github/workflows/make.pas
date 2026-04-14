@@ -434,10 +434,11 @@ begin
 end;
 
 // ---------------------------------------------------------------------------
-// Determine whether an .lpi project is a test runner
+// Project classification helpers
 // ---------------------------------------------------------------------------
 
-// Project classification helpers
+// ---------------------------------------------------------------------------
+// Determine whether an .lpi project is GUI
 // ---------------------------------------------------------------------------
 
 // A project is considered GUI if its .lpi lists LCL as a required package.
@@ -458,6 +459,10 @@ begin
     Filter.Free;
   end;
 end;
+
+// ---------------------------------------------------------------------------
+// Determine whether an .lpi project is a test runner
+// ---------------------------------------------------------------------------
 
 // A console project is a test runner if its .lpr uses consoletestrunner.
 function IsTestProject(const ALpiPath: string): Boolean;

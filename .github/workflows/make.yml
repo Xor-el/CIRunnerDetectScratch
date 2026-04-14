@@ -311,7 +311,10 @@ jobs:
   #   # DragonFlyBSD — base LibreSSL is ABI-incompatible and DPorts
   #   # OpenSSL is 3.x which FPC 3.2.x doesn't support. FPC's
   #   # pure-Pascal DNS resolver is also broken (same as mono/mono#8168).
-  #   # Re-enable when FPC 3.2.4+ ships with OpenSSL 3.x support.
+  #   #
+  #   # FPC 3.2.4+ fixes OpenSSL 3.x loading (adds '.3' to DLLVersions)
+  #   # but will NOT fix the DNS resolver bug. The /etc/hosts workaround
+  #   # and LD_LIBRARY_PATH below will still be needed.
   #   #
   #   # Lazarus has no DragonFlyBSD lazconf.inc, but DragonFlyBSD is a
   #   # FreeBSD derivative so the FreeBSD include works as-is. We patch
@@ -346,9 +349,8 @@ jobs:
   #
   #           # DragonFlyBSD base ships LibreSSL in /usr/lib. Real OpenSSL
   #           # 3.x from DPorts installs to /usr/local/lib. FPC 3.2.4+
-  #           # will add '.3' to DLLVersions, enabling it to load OpenSSL
-  #           # 3.x natively. Until then, symlink .1.1 -> .3 and use
-  #           # LD_LIBRARY_PATH to prefer /usr/local/lib over /usr/lib.
+  #           # adds '.3' to DLLVersions — once upgraded, remove these
+  #           # symlinks but keep LD_LIBRARY_PATH in the run step.
   #           ln -sf libssl.so.3 /usr/local/lib/libssl.so.1.1
   #           ln -sf libcrypto.so.3 /usr/local/lib/libcrypto.so.1.1
   #

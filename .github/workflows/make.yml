@@ -334,12 +334,16 @@ jobs:
             # DragonFlyBSD base ships LibreSSL in /usr/lib which is not
             # ABI-compatible with FPC's openssl unit. "pkg install openssl"
             # installs real OpenSSL 3.x to /usr/local/lib alongside base
-            # LibreSSL. FPC 3.2.x only knows libssl.so.1.1 but OpenSSL 3
-            # provides libssl.so.3 — symlinking 1.1→3 causes ABI mismatch.
-            # Instead, make.pas reads SSL_LIB_NAME / CRYPTO_LIB_NAME env
-            # vars to load the correct library names directly.
+            # LibreSSL. FPC 3.2.x searches for libssl.so.1.1 — symlink
+            # that name to libssl.so.3 in /usr/local/lib (where only real
+            # OpenSSL lives). Combined with LD_LIBRARY_PATH=/usr/local/lib
+            # in the run step, FPC will find and load real OpenSSL 3.x.
+            # OpenSSL 3.x is forward-compatible for the basic TLS APIs
+            # that FPC uses (SSL_new, SSL_connect, etc.).
             # This won't be resolved by FPC 3.2.4+ because the fundamental
             # issue is LibreSSL vs OpenSSL — we must point at real OpenSSL.
+            ln -sf libssl.so.3 /usr/local/lib/libssl.so.1.1
+            ln -sf libcrypto.so.3 /usr/local/lib/libcrypto.so.1.1
 
             LAZARUS_DIR="/tmp/lazarus-src"
             git clone --depth 1 --branch lazarus_4_4 \
@@ -370,10 +374,9 @@ jobs:
           run: |
             set -xeuo pipefail
             export PATH="/tmp/lazarus-src:$PATH"
-            # Point FPC at real OpenSSL 3.x from DPorts, not base LibreSSL.
+            # Ensure FPC loads real OpenSSL from /usr/local/lib
+            # instead of base LibreSSL from /usr/lib.
             export LD_LIBRARY_PATH="/usr/local/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-            export SSL_LIB_NAME="libssl.so.3"
-            export CRYPTO_LIB_NAME="libcrypto.so.3"
             /usr/local/bin/openssl version || true
             fpc -iV
             lazbuild --version

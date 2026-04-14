@@ -545,17 +545,6 @@ begin
     DLLUtilName := 'libcrypto-3.dll';
       {$ENDIF}
     {$ENDIF}
-
-    // Allow CI to override SSL library names via environment variables.
-    // This is needed on DragonFlyBSD where base ships LibreSSL (not
-    // ABI-compatible with FPC's openssl unit) and the real OpenSSL 3.x
-    // from DPorts uses libssl.so.3 / libcrypto.so.3 — neither of which
-    // FPC 3.2.x knows about. This hack can be removed once we move to
-    // FPC 3.2.4+ which natively includes '.3' in DLLVersions.
-    if GetEnvironmentVariable('SSL_LIB_NAME') <> '' then
-      DLLSSLName := GetEnvironmentVariable('SSL_LIB_NAME');
-    if GetEnvironmentVariable('CRYPTO_LIB_NAME') <> '' then
-      DLLUtilName := GetEnvironmentVariable('CRYPTO_LIB_NAME');
     InitSSLInterface;
     for I := 0 to High(Dependencies) do
       RegisterAllPackages(ResolveDependency(Dependencies[I]));

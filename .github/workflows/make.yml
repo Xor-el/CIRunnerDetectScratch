@@ -370,7 +370,10 @@ jobs:
           run: |
             set -xeuo pipefail
             export PATH="/tmp/lazarus-src:$PATH"
-            openssl version || true
+            # Ensure FPC loads real OpenSSL from /usr/local/lib
+            # instead of base LibreSSL from /usr/lib.
+            export LD_LIBRARY_PATH="/usr/local/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            /usr/local/bin/openssl version || true
             fpc -iV
             lazbuild --version
             instantfpc .github/workflows/make.pas

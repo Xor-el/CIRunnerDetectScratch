@@ -190,10 +190,6 @@ jobs:
   #    - OpenBSD: pre-built FPC binary links against older libc;
   #      incompatible with current OpenBSD. No usable package either.
   #    - NetBSD aarch64: no FPC package available.
-  #
-  #  Disabled (commented out below):
-  #    - NetBSD x86_64: package server intermittently times out.
-  #    - DragonFlyBSD x86_64: FPC 3.2.x TLS broken (see comment below).
   # ─────────────────────────────────────────────────────────────────────
 
   freebsd:
@@ -209,15 +205,14 @@ jobs:
       - name: Build (FreeBSD x86_64)
         uses: vmactions/freebsd-vm@v1
         with:
-          envs: LAZARUS_BRANCH LAZARUS_REPO
           release: "15.0"
           usesh: true
           prepare: |
             pkg install -y fpc git wget gmake
 
             LAZARUS_DIR="/tmp/lazarus-src"
-            git clone --depth 1 --branch "$LAZARUS_BRANCH" \
-              "$LAZARUS_REPO" "$LAZARUS_DIR"
+            git clone --depth 1 --branch lazarus_4_4 \
+              https://github.com/fpc/Lazarus.git "$LAZARUS_DIR"
             gmake -C "$LAZARUS_DIR" lazbuild
 
             mkdir -p "$HOME/.lazarus"
@@ -241,156 +236,139 @@ jobs:
             lazbuild --version
             instantfpc .github/workflows/make.pas
 
-  # netbsd:
-  #   name: NetBSD x86_64
-  #   runs-on: ubuntu-latest
-  #   timeout-minutes: 120
-  #   # Disabled: NetBSD package server (cdn.NetBSD.org) intermittently
-  #   # times out, causing CI failures. Re-enable when server is stable.
-  #   #
-  #   # pkgin is not pre-installed in the vmactions NetBSD image, so we
-  #   # use pkg_add directly. The VM ships with slightly older base
-  #   # packages (e.g. pcre2-10.46) that conflict with the latest repo
-  #   # (which has git requiring pcre2>=10.47). We force-replace pcre2
-  #   # first, then install everything else cleanly.
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v6
-  #       with:
-  #         submodules: true
-  #
-  #     - name: Build (NetBSD x86_64)
-  #       uses: vmactions/netbsd-vm@v1
-  #       with:
-  #         envs: LAZARUS_BRANCH LAZARUS_REPO
-  #         prepare: |
-  #           export PKG_PATH="https://cdn.NetBSD.org/pub/pkgsrc/packages/NetBSD/$(uname -p)/$(uname -r | cut -d_ -f1)/All"
-  #
-  #           # Force-update pcre2 to resolve version conflict with git
-  #           pkg_add -uu pcre2 || true
-  #           pkg_add fpc git wget gmake
-  #
-  #           # NetBSD's FPC package may not generate fpc.cfg properly.
-  #           # Ensure fpc.cfg exists and points to the correct unit paths.
-  #           FPC_VER=$(fpc -iV)
-  #           FPC_CFG="/usr/pkg/etc/fpc.cfg"
-  #           if [ ! -f "$FPC_CFG" ] || ! grep -q "units" "$FPC_CFG"; then
-  #             /usr/pkg/lib/fpc/${FPC_VER}/samplecfg \
-  #               /usr/pkg/lib/fpc/${FPC_VER} /usr/pkg/etc
-  #           fi
-  #
-  #           LAZARUS_DIR="/tmp/lazarus-src"
-  #           git clone --depth 1 --branch "$LAZARUS_BRANCH" \
-  #             "$LAZARUS_REPO" "$LAZARUS_DIR"
-  #           gmake -C "$LAZARUS_DIR" lazbuild
-  #
-  #           mkdir -p "$HOME/.lazarus"
-  #           cat > "$HOME/.lazarus/environmentoptions.xml" <<EOF
-  #           <?xml version="1.0" encoding="UTF-8"?>
-  #           <CONFIG>
-  #             <EnvironmentOptions>
-  #               <LazarusDirectory Value="$LAZARUS_DIR"/>
-  #               <CompilerFilename Value="$(which fpc)"/>
-  #             </EnvironmentOptions>
-  #           </CONFIG>
-  #           EOF
-  #
-  #           export PATH="$LAZARUS_DIR:/usr/pkg/bin:$PATH"
-  #           lazbuild --version
-  #         run: |
-  #           set -xeuo pipefail
-  #           export PATH="/tmp/lazarus-src:/usr/pkg/bin:$PATH"
-  #           openssl version || true
-  #           fpc -iV
-  #           lazbuild --version
-  #           instantfpc .github/workflows/make.pas
+  netbsd:
+    name: NetBSD x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # pkgin is not pre-installed in the vmactions NetBSD image, so we
+    # use pkg_add directly. The VM ships with slightly older base
+    # packages (e.g. pcre2-10.46) that conflict with the latest repo
+    # (which has git requiring pcre2>=10.47). We force-replace pcre2
+    # first, then install everything else cleanly.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
 
-  # dragonflybsd:
-  #   name: DragonFlyBSD x86_64
-  #   runs-on: ubuntu-latest
-  #   timeout-minutes: 120
-  #   # Disabled: FPC 3.2.x cannot establish TLS connections on
-  #   # DragonFlyBSD — base LibreSSL is ABI-incompatible and DPorts
-  #   # OpenSSL is 3.x which FPC 3.2.x doesn't support. FPC's
-  #   # pure-Pascal DNS resolver is also broken (same as mono/mono#8168).
-  #   #
-  #   # FPC 3.2.4+ fixes OpenSSL 3.x loading (adds '.3' to DLLVersions)
-  #   # but will NOT fix the DNS resolver bug. The /etc/hosts workaround
-  #   # and LD_LIBRARY_PATH below will still be needed.
-  #   #
-  #   # Lazarus has no DragonFlyBSD lazconf.inc, but DragonFlyBSD is a
-  #   # FreeBSD derivative so the FreeBSD include works as-is. We patch
-  #   # it in after cloning the Lazarus source.
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v6
-  #       with:
-  #         submodules: true
-  #
-  #     - name: Build (DragonFlyBSD x86_64)
-  #       uses: vmactions/dragonflybsd-vm@v1
-  #       with:
-  #         envs: LAZARUS_BRANCH LAZARUS_REPO
-  #         usesh: true
-  #         prepare: |
-  #           pkg install -y fpc git wget gmake openssl
-  #
-  #           # FPC's pure-Pascal DNS resolver (netdb unit) is broken on
-  #           # DragonFlyBSD — it fails to resolve hostnames even though
-  #           # system tools (host, drill, wget, git) work fine. This is
-  #           # the same class of bug as mono/mono#8168.
-  #           #
-  #           # Workaround: resolve dependency hostnames via system DNS
-  #           # and add them to /etc/hosts. FPC's netdb checks /etc/hosts
-  #           # first (via gethostbyname), bypassing the broken resolver.
-  #           for h in github.com packages.lazarus-ide.org; do
-  #             ip=$(drill "$h" 2>/dev/null | awk '/^'"$h"'/{print $5; exit}')
-  #             if [ -n "$ip" ]; then
-  #               echo "$ip $h" >> /etc/hosts
-  #             fi
-  #           done
-  #
-  #           # DragonFlyBSD base ships LibreSSL in /usr/lib. Real OpenSSL
-  #           # 3.x from DPorts installs to /usr/local/lib. FPC 3.2.4+
-  #           # adds '.3' to DLLVersions — once upgraded, remove these
-  #           # symlinks but keep LD_LIBRARY_PATH in the run step.
-  #           ln -sf libssl.so.3 /usr/local/lib/libssl.so.1.1
-  #           ln -sf libcrypto.so.3 /usr/local/lib/libcrypto.so.1.1
-  #
-  #           LAZARUS_DIR="/tmp/lazarus-src"
-  #           git clone --depth 1 --branch "$LAZARUS_BRANCH" \
-  #             "$LAZARUS_REPO" "$LAZARUS_DIR"
-  #
-  #           # Lazarus is missing include/dragonfly/lazconf.inc.
-  #           # DragonFlyBSD is a FreeBSD derivative, so the FreeBSD
-  #           # version works as-is.
-  #           mkdir -p "$LAZARUS_DIR/ide/packages/ideconfig/include/dragonfly"
-  #           cp "$LAZARUS_DIR/ide/packages/ideconfig/include/freebsd/lazconf.inc" \
-  #              "$LAZARUS_DIR/ide/packages/ideconfig/include/dragonfly/lazconf.inc"
-  #
-  #           gmake -C "$LAZARUS_DIR" lazbuild
-  #
-  #           mkdir -p "$HOME/.lazarus"
-  #           cat > "$HOME/.lazarus/environmentoptions.xml" <<EOF
-  #           <?xml version="1.0" encoding="UTF-8"?>
-  #           <CONFIG>
-  #             <EnvironmentOptions>
-  #               <LazarusDirectory Value="$LAZARUS_DIR"/>
-  #               <CompilerFilename Value="$(which fpc)"/>
-  #             </EnvironmentOptions>
-  #           </CONFIG>
-  #           EOF
-  #
-  #           export PATH="$LAZARUS_DIR:$PATH"
-  #           lazbuild --version
-  #         run: |
-  #           set -xeuo pipefail
-  #           export PATH="/tmp/lazarus-src:$PATH"
-  #           export LD_LIBRARY_PATH="/usr/local/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-  #           /usr/local/bin/openssl version || true
-  #           fpc -iV
-  #           lazbuild --version
-  #           instantfpc .github/workflows/make.pas
+      - name: Build (NetBSD x86_64)
+        uses: vmactions/netbsd-vm@v1
+        with:
+          prepare: |
+            export PKG_PATH="https://cdn.NetBSD.org/pub/pkgsrc/packages/NetBSD/$(uname -p)/$(uname -r | cut -d_ -f1)/All"
+
+            # Force-update pcre2 to resolve version conflict with git
+            pkg_add -uu pcre2 || true
+            pkg_add fpc git wget gmake
+
+            # NetBSD's FPC package may not generate fpc.cfg properly.
+            # Ensure fpc.cfg exists and points to the correct unit paths.
+            FPC_VER=$(fpc -iV)
+            FPC_CFG="/usr/pkg/etc/fpc.cfg"
+            if [ ! -f "$FPC_CFG" ] || ! grep -q "units" "$FPC_CFG"; then
+              /usr/pkg/lib/fpc/${FPC_VER}/samplecfg \
+                /usr/pkg/lib/fpc/${FPC_VER} /usr/pkg/etc
+            fi
+
+            LAZARUS_DIR="/tmp/lazarus-src"
+            git clone --depth 1 --branch lazarus_4_4 \
+              https://github.com/fpc/Lazarus.git "$LAZARUS_DIR"
+            gmake -C "$LAZARUS_DIR" lazbuild
+
+            mkdir -p "$HOME/.lazarus"
+            cat > "$HOME/.lazarus/environmentoptions.xml" <<EOF
+            <?xml version="1.0" encoding="UTF-8"?>
+            <CONFIG>
+              <EnvironmentOptions>
+                <LazarusDirectory Value="$LAZARUS_DIR"/>
+                <CompilerFilename Value="$(which fpc)"/>
+              </EnvironmentOptions>
+            </CONFIG>
+            EOF
+
+            export PATH="$LAZARUS_DIR:/usr/pkg/bin:$PATH"
+            lazbuild --version
+          run: |
+            set -xeuo pipefail
+            export PATH="/tmp/lazarus-src:/usr/pkg/bin:$PATH"
+            openssl version || true
+            fpc -iV
+            lazbuild --version
+            instantfpc .github/workflows/make.pas
+
+  dragonflybsd:
+    name: DragonFlyBSD x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # Lazarus has no DragonFlyBSD lazconf.inc, but DragonFlyBSD is a
+    # FreeBSD derivative so the FreeBSD include works as-is. We patch
+    # it in after cloning the Lazarus source.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - name: Build (DragonFlyBSD x86_64)
+        uses: vmactions/dragonflybsd-vm@v1
+        with:
+          usesh: true
+          prepare: |
+            pkg install -y fpc git wget gmake
+
+            # DragonFlyBSD ships LibreSSL in base. Real OpenSSL packages
+            # (openssl31/32/33) conflict with LibreSSL so we cannot
+            # install them. FPC's openssl unit partially works with
+            # LibreSSL for basic TLS. The main issue is DNS resolution
+            # in the run step — ensure resolv.conf is correct.
+
+            LAZARUS_DIR="/tmp/lazarus-src"
+            git clone --depth 1 --branch lazarus_4_4 \
+              https://github.com/fpc/Lazarus.git "$LAZARUS_DIR"
+
+            # Lazarus is missing include/dragonfly/lazconf.inc.
+            # DragonFlyBSD is a FreeBSD derivative, so the FreeBSD
+            # version works as-is.
+            mkdir -p "$LAZARUS_DIR/ide/packages/ideconfig/include/dragonfly"
+            cp "$LAZARUS_DIR/ide/packages/ideconfig/include/freebsd/lazconf.inc" \
+               "$LAZARUS_DIR/ide/packages/ideconfig/include/dragonfly/lazconf.inc"
+
+            gmake -C "$LAZARUS_DIR" lazbuild
+
+            mkdir -p "$HOME/.lazarus"
+            cat > "$HOME/.lazarus/environmentoptions.xml" <<EOF
+            <?xml version="1.0" encoding="UTF-8"?>
+            <CONFIG>
+              <EnvironmentOptions>
+                <LazarusDirectory Value="$LAZARUS_DIR"/>
+                <CompilerFilename Value="$(which fpc)"/>
+              </EnvironmentOptions>
+            </CONFIG>
+            EOF
+
+            export PATH="$LAZARUS_DIR:$PATH"
+            lazbuild --version
+          run: |
+            set -xeuo pipefail
+            export PATH="/tmp/lazarus-src:$PATH"
+
+            # Ensure DNS works in the run step (vmactions VMs can
+            # lose resolv.conf between prepare and run).
+            if ! host github.com >/dev/null 2>&1; then
+              echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+              echo "nameserver 1.1.1.1" >> /etc/resolv.conf
+            fi
+
+            # DragonFlyBSD base ships LibreSSL. FPC's openssl unit
+            # looks for libssl.so / libcrypto.so which resolve to
+            # LibreSSL. Symlink versioned names so FPC can load them.
+            ln -sf /usr/lib/libssl.so /usr/lib/libssl.so.1.1 || true
+            ln -sf /usr/lib/libcrypto.so /usr/lib/libcrypto.so.1.1 || true
+
+            openssl version || true
+            fpc -iV
+            lazbuild --version
+            instantfpc .github/workflows/make.pas
 
   # ─────────────────────────────────────────────────────────────────────
   #  Tier 4 — Solaris via vmactions QEMU system VM
@@ -413,7 +391,6 @@ jobs:
       - name: Build (Solaris x86_64)
         uses: vmactions/solaris-vm@v1
         with:
-          envs: LAZARUS_BRANCH LAZARUS_REPO
           release: "11.4-gcc"
           usesh: true
           prepare: |
@@ -437,8 +414,8 @@ jobs:
 
             # Build lazbuild from source
             LAZARUS_DIR="/tmp/lazarus-src"
-            git clone --depth 1 --branch "$LAZARUS_BRANCH" \
-              "$LAZARUS_REPO" "$LAZARUS_DIR"
+            git clone --depth 1 --branch lazarus_4_4 \
+              https://github.com/fpc/Lazarus.git "$LAZARUS_DIR"
             gmake -C "$LAZARUS_DIR" lazbuild
 
             mkdir -p "$HOME/.lazarus"

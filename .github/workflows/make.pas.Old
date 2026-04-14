@@ -532,10 +532,8 @@ begin
   // Install and register dependencies (safe when array is empty)
   if Length(Dependencies) > 0 then
   begin
-    // FPC 3.2.2 hardcodes OpenSSL 1.1 DLL names on Windows, but
-    // modern CI runners ship OpenSSL 3.x. Override so FPC can find
-    // the libraries. This hack can be removed once we move to
-    // FPC 3.2.4+ which natively includes OpenSSL 3.x DLL names.
+    // FPC 3.2.2 only knows OpenSSL 1.1 DLL names on Windows.
+    // Override to use OpenSSL 3.x which ships on modern CI runners.
     {$IFDEF MSWINDOWS}
       {$IFDEF WIN64}
     DLLSSLName  := 'libssl-3-x64.dll';

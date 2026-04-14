@@ -314,30 +314,29 @@ jobs:
         with:
           usesh: true
           prepare: |
-            pkg install -y fpc git wget gmake
+            pkg install -y fpc git wget gmake unzip
 
-            # FPC's pure-Pascal DNS resolver (netdb unit) is broken on
-            # DragonFlyBSD — it fails to resolve hostnames even though
-            # system tools (host, drill, wget, git) work fine. This is
-            # the same class of bug as mono/mono#8168.
+            # DragonFlyBSD ships LibreSSL in base. FPC's sockets unit
+            # has a known DNS resolution bug on DragonFlyBSD (same root
+            # cause as mono/mono#8168 — IPv4 support detection fails,
+            # breaking getaddrinfo). System tools (wget, git) work fine
+            # but FPC's TFPHttpClient cannot resolve hostnames.
             #
-            # Workaround: resolve dependency hostnames via system DNS
-            # and add them to /etc/hosts. FPC's netdb checks /etc/hosts
-            # first (via gethostbyname), bypassing the broken resolver.
-            for h in github.com packages.lazarus-ide.org; do
-              ip=$(drill "$h" 2>/dev/null | awk '/^'"$h"'/{print $5; exit}')
-              if [ -n "$ip" ]; then
-                echo "$ip $h" >> /etc/hosts
-              fi
-            done
+            # Workaround: pre-download GitHub dependencies using wget
+            # and place them where make.pas expects them. make.pas
+            # checks DirectoryExists() and skips download if present.
+            DEPS_DIR="$HOME/.lazarus/github-packages"
+            mkdir -p "$DEPS_DIR"
 
-            # FPC 3.2.x looks for libssl.so.1.1 / libcrypto.so.1.1.
-            # DragonFlyBSD base ships LibreSSL (not ABI-compatible with
-            # OpenSSL). Symlink so FPC can at least load the libraries;
-            # LibreSSL provides enough of the OpenSSL 1.1 API surface
-            # for basic HTTPS to work.
-            ln -sf /usr/lib/libssl.so /usr/lib/libssl.so.1.1 || true
-            ln -sf /usr/lib/libcrypto.so /usr/lib/libcrypto.so.1.1 || true
+            # SimpleBaseLib4Pascal (matches make.pas Dependencies array)
+            DEP_NAME="Xor-el--SimpleBaseLib4Pascal"
+            if [ ! -d "$DEPS_DIR/$DEP_NAME" ]; then
+              wget -q "https://github.com/Xor-el/SimpleBaseLib4Pascal/archive/master.zip" \
+                -O "/tmp/${DEP_NAME}.zip"
+              mkdir -p "$DEPS_DIR/$DEP_NAME"
+              unzip -q "/tmp/${DEP_NAME}.zip" -d "$DEPS_DIR/$DEP_NAME"
+              rm -f "/tmp/${DEP_NAME}.zip"
+            fi
 
             LAZARUS_DIR="/tmp/lazarus-src"
             git clone --depth 1 --branch lazarus_4_4 \
@@ -368,6 +367,13 @@ jobs:
           run: |
             set -xeuo pipefail
             export PATH="/tmp/lazarus-src:$PATH"
+
+            # Diagnostics: understand why FPC's netdb DNS fails
+            cat /etc/resolv.conf || true
+            cat /etc/nsswitch.conf || true
+            host github.com || true
+            drill github.com || true
+
             openssl version || true
             fpc -iV
             lazbuild --version

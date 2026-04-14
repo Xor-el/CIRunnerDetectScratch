@@ -314,7 +314,7 @@ jobs:
         with:
           usesh: true
           prepare: |
-            pkg install -y fpc git wget gmake
+            pkg install -y fpc git wget gmake openssl
 
             # FPC's pure-Pascal DNS resolver (netdb unit) is broken on
             # DragonFlyBSD — it fails to resolve hostnames even though
@@ -331,13 +331,15 @@ jobs:
               fi
             done
 
-            # FPC 3.2.x looks for libssl.so.1.1 / libcrypto.so.1.1.
-            # DragonFlyBSD base ships LibreSSL (not ABI-compatible with
-            # OpenSSL). Symlink so FPC can at least load the libraries;
-            # LibreSSL provides enough of the OpenSSL 1.1 API surface
-            # for basic HTTPS to work.
-            ln -sf /usr/lib/libssl.so /usr/lib/libssl.so.1.1 || true
-            ln -sf /usr/lib/libcrypto.so /usr/lib/libcrypto.so.1.1 || true
+            # DragonFlyBSD base ships LibreSSL in /usr/lib which is not
+            # ABI-compatible with FPC's openssl unit. "pkg install openssl"
+            # installs real OpenSSL 3.x to /usr/local/lib alongside base
+            # LibreSSL. Symlink versioned names so FPC can find it.
+            # This won't be resolved by FPC 3.2.4+ (which only adds '.3'
+            # to the search list) because the fundamental issue is
+            # LibreSSL vs OpenSSL — we must point at the real OpenSSL.
+            ln -sf /usr/local/lib/libssl.so /usr/local/lib/libssl.so.1.1
+            ln -sf /usr/local/lib/libcrypto.so /usr/local/lib/libcrypto.so.1.1
 
             LAZARUS_DIR="/tmp/lazarus-src"
             git clone --depth 1 --branch lazarus_4_4 \

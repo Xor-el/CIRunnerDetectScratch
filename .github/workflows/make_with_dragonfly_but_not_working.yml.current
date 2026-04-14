@@ -314,29 +314,13 @@ jobs:
         with:
           usesh: true
           prepare: |
-            pkg install -y fpc git wget gmake unzip
+            pkg install -y fpc git wget gmake
 
-            # DragonFlyBSD ships LibreSSL in base. FPC's sockets unit
-            # has a known DNS resolution bug on DragonFlyBSD (same root
-            # cause as mono/mono#8168 — IPv4 support detection fails,
-            # breaking getaddrinfo). System tools (wget, git) work fine
-            # but FPC's TFPHttpClient cannot resolve hostnames.
-            #
-            # Workaround: pre-download GitHub dependencies using wget
-            # and place them where make.pas expects them. make.pas
-            # checks DirectoryExists() and skips download if present.
-            DEPS_DIR="$HOME/.lazarus/github-packages"
-            mkdir -p "$DEPS_DIR"
-
-            # SimpleBaseLib4Pascal (matches make.pas Dependencies array)
-            DEP_NAME="Xor-el--SimpleBaseLib4Pascal"
-            if [ ! -d "$DEPS_DIR/$DEP_NAME" ]; then
-              wget -q "https://github.com/Xor-el/SimpleBaseLib4Pascal/archive/master.zip" \
-                -O "/tmp/${DEP_NAME}.zip"
-              mkdir -p "$DEPS_DIR/$DEP_NAME"
-              unzip -q "/tmp/${DEP_NAME}.zip" -d "$DEPS_DIR/$DEP_NAME"
-              rm -f "/tmp/${DEP_NAME}.zip"
-            fi
+            # DragonFlyBSD ships LibreSSL in base. Real OpenSSL packages
+            # (openssl31/32/33) conflict with LibreSSL so we cannot
+            # install them. FPC's openssl unit partially works with
+            # LibreSSL for basic TLS. The main issue is DNS resolution
+            # in the run step — ensure resolv.conf is correct.
 
             LAZARUS_DIR="/tmp/lazarus-src"
             git clone --depth 1 --branch lazarus_4_4 \
@@ -368,11 +352,18 @@ jobs:
             set -xeuo pipefail
             export PATH="/tmp/lazarus-src:$PATH"
 
-            # Diagnostics: understand why FPC's netdb DNS fails
-            cat /etc/resolv.conf || true
-            cat /etc/nsswitch.conf || true
-            host github.com || true
-            drill github.com || true
+            # Ensure DNS works in the run step (vmactions VMs can
+            # lose resolv.conf between prepare and run).
+            if ! host github.com >/dev/null 2>&1; then
+              echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+              echo "nameserver 1.1.1.1" >> /etc/resolv.conf
+            fi
+
+            # DragonFlyBSD base ships LibreSSL. FPC's openssl unit
+            # looks for libssl.so / libcrypto.so which resolve to
+            # LibreSSL. Symlink versioned names so FPC can load them.
+            ln -sf /usr/lib/libssl.so /usr/lib/libssl.so.1.1 || true
+            ln -sf /usr/lib/libcrypto.so /usr/lib/libcrypto.so.1.1 || true
 
             openssl version || true
             fpc -iV

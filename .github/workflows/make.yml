@@ -209,6 +209,7 @@ jobs:
       - name: Build (FreeBSD x86_64)
         uses: vmactions/freebsd-vm@v1
         with:
+          envs: LAZARUS_BRANCH LAZARUS_REPO
           release: "15.0"
           usesh: true
           prepare: |
@@ -261,6 +262,7 @@ jobs:
   #     - name: Build (NetBSD x86_64)
   #       uses: vmactions/netbsd-vm@v1
   #       with:
+  #         envs: LAZARUS_BRANCH LAZARUS_REPO
   #         prepare: |
   #           export PKG_PATH="https://cdn.NetBSD.org/pub/pkgsrc/packages/NetBSD/$(uname -p)/$(uname -r | cut -d_ -f1)/All"
   #
@@ -328,6 +330,7 @@ jobs:
   #     - name: Build (DragonFlyBSD x86_64)
   #       uses: vmactions/dragonflybsd-vm@v1
   #       with:
+  #         envs: LAZARUS_BRANCH LAZARUS_REPO
   #         usesh: true
   #         prepare: |
   #           pkg install -y fpc git wget gmake openssl
@@ -410,6 +413,7 @@ jobs:
       - name: Build (Solaris x86_64)
         uses: vmactions/solaris-vm@v1
         with:
+          envs: LAZARUS_BRANCH LAZARUS_REPO
           release: "11.4-gcc"
           usesh: true
           prepare: |

@@ -215,8 +215,8 @@ jobs:
             pkg install -y fpc git wget gmake
 
             LAZARUS_DIR="/tmp/lazarus-src"
-            git clone --depth 1 --branch lazarus_4_4 \
-              https://github.com/fpc/Lazarus.git "$LAZARUS_DIR"
+            git clone --depth 1 --branch "$LAZARUS_BRANCH" \
+              "$LAZARUS_REPO" "$LAZARUS_DIR"
             gmake -C "$LAZARUS_DIR" lazbuild
 
             mkdir -p "$HOME/.lazarus"
@@ -278,8 +278,8 @@ jobs:
   #           fi
   #
   #           LAZARUS_DIR="/tmp/lazarus-src"
-  #           git clone --depth 1 --branch lazarus_4_4 \
-  #             https://github.com/fpc/Lazarus.git "$LAZARUS_DIR"
+  #           git clone --depth 1 --branch "$LAZARUS_BRANCH" \
+  #             "$LAZARUS_REPO" "$LAZARUS_DIR"
   #           gmake -C "$LAZARUS_DIR" lazbuild
   #
   #           mkdir -p "$HOME/.lazarus"
@@ -355,8 +355,8 @@ jobs:
   #           ln -sf libcrypto.so.3 /usr/local/lib/libcrypto.so.1.1
   #
   #           LAZARUS_DIR="/tmp/lazarus-src"
-  #           git clone --depth 1 --branch lazarus_4_4 \
-  #             https://github.com/fpc/Lazarus.git "$LAZARUS_DIR"
+  #           git clone --depth 1 --branch "$LAZARUS_BRANCH" \
+  #             "$LAZARUS_REPO" "$LAZARUS_DIR"
   #
   #           # Lazarus is missing include/dragonfly/lazconf.inc.
   #           # DragonFlyBSD is a FreeBSD derivative, so the FreeBSD
@@ -433,8 +433,8 @@ jobs:
 
             # Build lazbuild from source
             LAZARUS_DIR="/tmp/lazarus-src"
-            git clone --depth 1 --branch lazarus_4_4 \
-              https://github.com/fpc/Lazarus.git "$LAZARUS_DIR"
+            git clone --depth 1 --branch "$LAZARUS_BRANCH" \
+              "$LAZARUS_REPO" "$LAZARUS_DIR"
             gmake -C "$LAZARUS_DIR" lazbuild
 
             mkdir -p "$HOME/.lazarus"

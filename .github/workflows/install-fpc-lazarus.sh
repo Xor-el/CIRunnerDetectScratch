@@ -112,29 +112,86 @@ printf '%s\nn\nn\nn\nn\nn\nn\nn\nn\nn\nn\n' "$INSTALL_PREFIX" \
   | bash ./install.sh
 
 # ── Locate the installed compiler ────────────────────────────────────
+#
+# Layout differs between Unix and Windows:
+#   Unix:    $PREFIX/bin/fpc                    (single binary)
+#   Windows: $PREFIX/bin/<target>/fpc.exe       (target-specific)
+#            $PREFIX/bin/instantfpc.exe         (target-independent
+#                                                 utilities)
+# Both directories need to be on PATH on Windows.
 if [ "$IS_WINDOWS" = "1" ]; then
-  FPC_EXE="$INSTALL_PREFIX/bin/fpc.exe"
+  FPC_EXE="$INSTALL_PREFIX/bin/$FPC_TARGET/fpc.exe"
+  FPC_UTIL_DIR="$INSTALL_PREFIX/bin"
 else
   FPC_EXE="$INSTALL_PREFIX/bin/fpc"
+  FPC_UTIL_DIR=""
 fi
 
 if [ ! -f "$FPC_EXE" ]; then
   echo "ERROR: FPC compiler not found at $FPC_EXE" >&2
   ls -la "$INSTALL_PREFIX/bin/" || true
+  if [ "$IS_WINDOWS" = "1" ]; then
+    ls -la "$INSTALL_PREFIX/bin/$FPC_TARGET/" || true
+  fi
   exit 1
 fi
 
 FPC_BIN_DIR="$(dirname "$FPC_EXE")"
-export PATH="$FPC_BIN_DIR:$PATH"
+if [ -n "$FPC_UTIL_DIR" ]; then
+  export PATH="$FPC_BIN_DIR:$FPC_UTIL_DIR:$PATH"
+else
+  export PATH="$FPC_BIN_DIR:$PATH"
+fi
+
+# ── Linux glibc 2.34+ workaround ─────────────────────────────────────
+#
+# FPC 3.2.2 was built against glibc < 2.34 and its cprt0.o references
+# __libc_csu_init / __libc_csu_fini, which glibc 2.34 (Aug 2021) made
+# private. Linking anything FPC produces against current glibc fails:
+#   undefined reference to `__libc_csu_init'
+#   undefined reference to `__libc_csu_fini'
+#
+# Ubuntu 22.04+ ships glibc 2.34+ and is affected. The fix shipped in
+# FPC 3.2.4+ (and Debian/Fedora patched their packages); for our
+# pre-built tarball we patch in place by merging stub object code
+# into cprt0.o, satisfying the symbols at link time.
+#
+# Affected: every Linux target (x86_64, aarch64, arm/armhf). The
+# 'cprt0' name is consistent across architectures.
+#
+# See https://gitlab.com/freepascal.org/fpc/source/-/issues/39295
+if [ "$(uname -s)" = "Linux" ]; then
+  RTL_DIR="$INSTALL_PREFIX/lib/fpc/$FPC_VERSION/units/$FPC_TARGET/rtl"
+  CPRT0="$RTL_DIR/cprt0.o"
+  if [ -f "$CPRT0" ]; then
+    STUB_C="$WORK_DIR/csu_stubs.c"
+    STUB_O="$WORK_DIR/csu_stubs.o"
+    cat > "$STUB_C" <<'EOF'
+/* glibc 2.34+ removed __libc_csu_init / __libc_csu_fini. FPC 3.2.2's
+   cprt0.o still references them. Provide empty stubs so the linker
+   is satisfied. */
+void __libc_csu_init(int argc, char **argv, char **envp) { (void)argc; (void)argv; (void)envp; }
+void __libc_csu_fini(void) {}
+EOF
+    cc -c -fPIC -o "$STUB_O" "$STUB_C"
+    # Merge stubs into cprt0.o using `ld -r` (relocatable link).
+    # cprt0.o references __libc_csu_*; the stub provides them; the
+    # merged object resolves both within itself.
+    ld -r -o "$CPRT0.new" "$CPRT0" "$STUB_O"
+    mv "$CPRT0.new" "$CPRT0"
+    echo "Patched $CPRT0 with glibc 2.34+ stubs."
+  fi
+fi
 
 # ── Windows-specific: generate fpc.cfg ───────────────────────────────
 #
 # install.sh's final step calls $LIBDIR/samplecfg, which is a POSIX
 # shell script that does not ship in the Windows tarball. The Windows
-# replacement is fpcmkcfg.exe, which IS shipped. Without an fpc.cfg,
-# the compiler can't find its own units.
+# replacement is fpcmkcfg.exe at $PREFIX/bin/. Without an fpc.cfg,
+# the compiler can't find its own units. Note: fpc.cfg goes next to
+# fpc.exe in $PREFIX/bin/<target>/, since FPC searches there first.
 if [ "$IS_WINDOWS" = "1" ]; then
-  FPCMKCFG="$INSTALL_PREFIX/bin/fpcmkcfg.exe"
+  FPCMKCFG="$FPC_UTIL_DIR/fpcmkcfg.exe"
   if [ ! -f "$FPCMKCFG" ]; then
     echo "ERROR: fpcmkcfg.exe not found at $FPCMKCFG" >&2
     exit 1
@@ -146,9 +203,12 @@ fi
 # Add to GitHub Actions PATH so subsequent steps see fpc.
 # On Windows, GITHUB_PATH expects native Windows paths (C:\foo\bin),
 # not MSYS/Git Bash paths (/c/foo/bin). cygpath converts both ways.
+# Both bin/<target> and bin/ go on PATH so subsequent steps find both
+# fpc.exe (the compiler) and instantfpc.exe (the utility).
 if [ -n "${GITHUB_PATH:-}" ]; then
   if [ "$IS_WINDOWS" = "1" ]; then
-    cygpath -w "$FPC_BIN_DIR" >> "$GITHUB_PATH"
+    cygpath -w "$FPC_BIN_DIR"  >> "$GITHUB_PATH"
+    cygpath -w "$FPC_UTIL_DIR" >> "$GITHUB_PATH"
   else
     echo "$FPC_BIN_DIR" >> "$GITHUB_PATH"
   fi

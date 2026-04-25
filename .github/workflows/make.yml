@@ -302,7 +302,15 @@ jobs:
             pkg update -f
             pkg upgrade -y
 
-            pkg install -y bash curl git gmake
+            # FPC 3.2.2's freebsd binary was built on FreeBSD 11 (note
+            # tarball name: fpc-3.2.2.x86_64-freebsd11.tar). FreeBSD's
+            # ABI breaks across major versions, and compat libraries
+            # are cumulative — to run a FreeBSD 11 binary on FreeBSD
+            # 14, we need compat11x + compat12x + compat13x. Without
+            # this chain, lazbuild and any other FPC-built binary
+            # segfaults on FreeBSD 14.
+            pkg install -y bash curl git gmake \
+                           compat11x compat12x compat13x
           run: |
             set -xeuo pipefail
             export FPC_TARGET=x86_64-freebsd

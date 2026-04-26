@@ -55,6 +55,18 @@ type
     class function HasSHA3(): Boolean; static;
     class function HasCRC32(): Boolean; static;
     class function HasPMULL(): Boolean; static;
+
+    // Picks the highest declared tier in ATiers that is <= the cached
+    // FActiveSimdLevel. Falls back to TArmSimdLevel.Scalar when no tier
+    // matches or ATiers is empty. Dispatch units use this overload.
+    class function SelectSlot(const ATiers: array of TArmSimdLevel)
+      : TArmSimdLevel; overload; static;
+
+    // Pure overload: reasons over any caller-supplied active level.
+    // Used by tests to deterministically exercise fallback semantics
+    // without depending on the host CPU.
+    class function SelectSlot(AActiveLevel: TArmSimdLevel;
+      const ATiers: array of TArmSimdLevel): TArmSimdLevel; overload; static;
   end;
 
 implementation
@@ -347,35 +359,44 @@ end;
 { ========================= Probe & Override ================================= }
 
 class procedure TArmSimdFeatures.ProbeHardwareAndCache();
+var
+  LHasNEON, LHasSVE, LHasSVE2, LHasAES: Boolean;
 begin
-  FActiveSimdLevel := TArmSimdLevel.Scalar;
-  FHasAES := False;
-  FHasSHA1 := False;
-  FHasSHA256 := False;
-  FHasSHA512 := False;
-  FHasSHA3 := False;
-  FHasCRC32 := False;
-  FHasPMULL := False;
+  // Probe once, reason later
+  LHasNEON := CPUHasNEON();
+  LHasSVE  := CPUHasSVE()  and LHasNEON;  // SVE operates alongside Advanced SIMD (NEON)
+  LHasSVE2 := CPUHasSVE2() and LHasSVE;   // SVE2 is a strict superset of SVE
 
-  if CPUHasNEON() then
-  begin
-    FActiveSimdLevel := TArmSimdLevel.NEON;
+  // Pick the highest tier the CPU can sustain
+  if LHasSVE2 then
+    FActiveSimdLevel := TArmSimdLevel.SVE2
+  else if LHasSVE then
+    FActiveSimdLevel := TArmSimdLevel.SVE
+  else if LHasNEON then
+    FActiveSimdLevel := TArmSimdLevel.NEON
+  else
+    FActiveSimdLevel := TArmSimdLevel.Scalar;
 
-    FHasAES := CPUHasAES();
-    FHasSHA1 := CPUHasSHA1();
-    FHasSHA256 := CPUHasSHA256();
-    FHasSHA512 := CPUHasSHA512();
-    FHasSHA3 := CPUHasSHA3();
-    FHasCRC32 := CPUHasCRC32();
-    FHasPMULL := CPUHasPMULL();
+  // ARMv8 crypto extensions - operate on NEON V registers, so gate on NEON.
+  // AES and PMULL/PMULL2 share the same FEAT_AES feature bit in the
+  // ARM Architecture Reference Manual:
+  // a CPU that reports AES also reports 64-bit polynomial multiply, and vice versa.
+  // We probe both and require agreement - if they ever disagree (buggy CPUID
+  // emulation, partial hypervisor masking), we conservatively disable both.
+  LHasAES := CPUHasAES() and CPUHasPMULL() and LHasNEON;
+  FHasAES   := LHasAES;
+  FHasPMULL := LHasAES;
 
-    if CPUHasSVE() then
-    begin
-      FActiveSimdLevel := TArmSimdLevel.SVE;
-      if CPUHasSVE2() then
-        FActiveSimdLevel := TArmSimdLevel.SVE2;
-    end;
-  end;
+  // SHA extensions - each is an independent FEAT_SHA* bit, but all require
+  // NEON register state. SHA2 (SHA256) is architecturally a prerequisite for
+  // SHA512 and SHA3 on ARMv8, so we chain them defensively.
+  FHasSHA1   := CPUHasSHA1()   and LHasNEON;
+  FHasSHA256 := CPUHasSHA256() and LHasNEON;
+  FHasSHA512 := CPUHasSHA512() and LHasNEON and FHasSHA256;
+  FHasSHA3   := CPUHasSHA3()   and LHasNEON and FHasSHA256;
+
+  // CRC32 uses general-purpose registers, not NEON - genuinely independent.
+  FHasCRC32 := CPUHasCRC32();
 end;
 
 class procedure TArmSimdFeatures.ApplyBuildOverrides();
@@ -453,6 +474,39 @@ end;
 class function TArmSimdFeatures.HasPMULL(): Boolean;
 begin
   Result := FHasPMULL;
+end;
+
+class function TArmSimdFeatures.SelectSlot(const ATiers
+  : array of TArmSimdLevel): TArmSimdLevel;
+begin
+  Result := SelectSlot(FActiveSimdLevel, ATiers);
+end;
+
+class function TArmSimdFeatures.SelectSlot(AActiveLevel: TArmSimdLevel;
+  const ATiers: array of TArmSimdLevel): TArmSimdLevel;
+var
+  I: Integer;
+  LTier, LBest: TArmSimdLevel;
+  LFound: Boolean;
+begin
+  // Walk all declared tiers, keep the highest one that is <= AActiveLevel.
+  // Order of ATiers is irrelevant. Empty ATiers or no matching tier yields
+  // TArmSimdLevel.Scalar so dispatch units cleanly fall through to scalar.
+  LBest := TArmSimdLevel.Scalar;
+  LFound := False;
+  for I := 0 to System.Length(ATiers) - 1 do
+  begin
+    LTier := ATiers[I];
+    if (LTier <= AActiveLevel) and ((not LFound) or (LTier > LBest)) then
+    begin
+      LBest := LTier;
+      LFound := True;
+    end;
+  end;
+  if LFound then
+    Result := LBest
+  else
+    Result := TArmSimdLevel.Scalar;
 end;
 
 initialization

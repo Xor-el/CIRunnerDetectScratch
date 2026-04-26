@@ -275,6 +275,36 @@ jobs:
     timeout-minutes: 120
     needs: setup
     if: contains(format(',{0},', needs.setup.outputs.enabled_targets), ',freebsd,')
+    # ─────────────────────────────────────────────────────────────────
+    # INTERIM: install FPC from FreeBSD's pkg system instead of using
+    # the shared install-fpc-lazarus.sh script.
+    #
+    # Why: FPC 3.2.2's official tarball at downloads.freepascal.org is
+    # built on FreeBSD 11 (filename: fpc-3.2.2.x86_64-freebsd11.tar).
+    # FreeBSD's ABI is not stable across major versions, and binaries
+    # linked against FPC 3.2.2's freebsd11 RTL units segfault on any
+    # FreeBSD ≥12. The compat11x/12x/13x ports that historically
+    # smoothed this over are no longer available on FreeBSD 14+.
+    #
+    # Bootstrapping FPC from source (which is what every FreeBSD pkg
+    # maintainer does internally to ship `fpc`) gets close — the
+    # build completes — but FPC 3.2.2's source itself contains
+    # FreeBSD ≥12 incompatibilities (struct stat layout, etc., see
+    # FPC issue #37784). fixes_3_2 was tried; build still produced
+    # binaries that couldn't exec ppcx64 due to fpc.cfg path / version
+    # detection issues.
+    #
+    # Rather than chase those, we use FreeBSD's pkg-built fpc, which
+    # is freshly compiled against the running FreeBSD's libc and just
+    # works. This re-introduces a FreeBSD-specific code path; that's
+    # the deliberate tradeoff.
+    #
+    # Plan to remove this branch: when FPC 3.2.4 is released, the
+    # dist-mirror tarball will be FreeBSD ≥13-built and/or the source
+    # tarball will have all the FreeBSD compat backports. At that
+    # point, comment the INTERIM block below and uncomment the
+    # PREFERRED block — no other changes needed.
+    # ─────────────────────────────────────────────────────────────────
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -285,46 +315,80 @@ jobs:
         uses: vmactions/freebsd-vm@v1
         with:
           envs: FPC_VERSION LAZARUS_BRANCH LAZARUS_REPO
-          # Pinned to 14.3, the current stable major. The shared
-          # installer rebuilds FPC from source against the host libc
-          # (see install-fpc-lazarus.sh "FreeBSD bootstrap" block) so
-          # we are NOT pinned for ABI reasons — we're free to bump.
-          # Move to 15.x once its pkg cluster stabilises (currently
-          # blocked by https://github.com/freebsd/pkg/issues/2653).
+          # Pinned to 14.3 to avoid the broken FreeBSD:15:amd64 pkg
+          # cluster (see https://github.com/freebsd/pkg/issues/2653).
+          # Revisit once 15.x package infrastructure stabilises.
           release: "14.3"
           usesh: true
           prepare: |
+            # ─── INTERIM: pkg install fpc ──────────────────────────
             # Workaround for periodic FreeBSD pkg cluster breakage:
-            # bootstrap pkg fresh, force-refresh the catalog, and align
-            # pre-installed VM packages with the current repo before
-            # installing new ones — otherwise newly-installed packages
-            # may link against newer libs than the VM image ships.
+            # bootstrap pkg fresh, force-refresh the catalog, and
+            # align pre-installed VM packages with the current repo
+            # before installing new ones — otherwise newly-installed
+            # packages may link against newer libs than the VM image
+            # ships.
             export ASSUME_ALWAYS_YES=yes
             export IGNORE_OSVERSION=yes
             pkg bootstrap -f
             pkg update -f
             pkg upgrade -y
 
-            # bash, curl, git, gmake are needed by install-fpc-lazarus.sh
-            # (FPC source build uses gmake; clone uses git; FPC tarball
-            # download uses curl; install.sh uses bash).
+            pkg install -y fpc git wget gmake
+
+            LAZARUS_DIR="$HOME/lazarus-src"
+            git clone --depth 1 --branch "$LAZARUS_BRANCH" \
+              "$LAZARUS_REPO" "$LAZARUS_DIR"
+            gmake -C "$LAZARUS_DIR" lazbuild
+
+            mkdir -p "$HOME/.lazarus"
+            cat > "$HOME/.lazarus/environmentoptions.xml" <<EOF
+            <?xml version="1.0" encoding="UTF-8"?>
+            <CONFIG>
+              <EnvironmentOptions>
+                <LazarusDirectory Value="$LAZARUS_DIR"/>
+                <CompilerFilename Value="$(which fpc)"/>
+              </EnvironmentOptions>
+            </CONFIG>
+            EOF
+
+            export PATH="$LAZARUS_DIR:$PATH"
+            lazbuild --version
+
+            # ─── PREFERRED: shared installer (currently disabled) ──
+            # When FPC 3.2.4 ships, comment out the INTERIM block
+            # above and uncomment this. The shared script handles
+            # FreeBSD identically to the other 9 platforms.
             #
-            # binutils is needed for the FreeBSD source-bootstrap step:
-            # FPC's build invokes `as` to assemble the RTL startup
-            # objects (prt0.o, cprt0.o, ...), and FreeBSD's base only
-            # ships the LLVM toolchain — GNU as has to come from the
-            # binutils port. binutils also provides /usr/local/bin/ld
-            # (GNU ld.bfd), which FPC links against by convention; the
-            # FreeBSD ports tree's lang/fpc explicitly depends on
-            # binutils for the same reason.
-            pkg install -y bash curl git gmake binutils
+            # Add binutils to the pkg install line above (FPC source
+            # build needs GNU as / ld.bfd from /usr/local/bin/) and
+            # also add: bash curl
+            #
+            # export ASSUME_ALWAYS_YES=yes
+            # export IGNORE_OSVERSION=yes
+            # pkg bootstrap -f
+            # pkg update -f
+            # pkg upgrade -y
+            # pkg install -y bash curl git gmake binutils
           run: |
             set -xeuo pipefail
-            export FPC_TARGET=x86_64-freebsd
-            bash .github/workflows/install-fpc-lazarus.sh
-            export PATH="$HOME/lazarus-src:$HOME/fpc-install/bin:$PATH"
+            export PATH="$HOME/lazarus-src:$PATH"
             fpc -iV
+            lazbuild --version
             instantfpc .github/workflows/make.pas
+
+            # ─── PREFERRED: shared installer (currently disabled) ──
+            # When the INTERIM block in `prepare:` is removed,
+            # uncomment this. It runs the same shared script the
+            # other 9 platforms use — FPC_TARGET selects the dist-
+            # mirror tarball; INSTALL_PREFIX/LAZARUS_DIR default to
+            # $HOME/fpc-install and $HOME/lazarus-src.
+            #
+            # export FPC_TARGET=x86_64-freebsd
+            # bash .github/workflows/install-fpc-lazarus.sh
+            # export PATH="$HOME/lazarus-src:$HOME/fpc-install/bin:$PATH"
+            # fpc -iV
+            # instantfpc .github/workflows/make.pas
 
   netbsd:
     name: NetBSD x86_64

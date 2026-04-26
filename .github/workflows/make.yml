@@ -285,16 +285,13 @@ jobs:
         uses: vmactions/freebsd-vm@v1
         with:
           envs: FPC_VERSION LAZARUS_BRANCH LAZARUS_REPO
-          # Pinned to 13.5: FPC 3.2.2's binary was built on FreeBSD 11
-          # (tarball: fpc-3.2.2.x86_64-freebsd11.tar) and binaries
-          # built on freebsd11 segfault on FreeBSD 14+ even with
-          # compat libraries — and compat11x/12x/13x are no longer
-          # available in pkg repositories on FreeBSD 14.x. FreeBSD 13
-          # is the closest still-available major version that keeps
-          # ABI compatibility with FreeBSD 11 binaries (libc.so.7
-          # remained the libc major across 11→13). 13.5 is the final
-          # 13.x release and entered extended support in 2025.
-          release: "13.5"
+          # Pinned to 14.3, the current stable major. The shared
+          # installer rebuilds FPC from source against the host libc
+          # (see install-fpc-lazarus.sh "FreeBSD bootstrap" block) so
+          # we are NOT pinned for ABI reasons — we're free to bump.
+          # Move to 15.x once its pkg cluster stabilises (currently
+          # blocked by https://github.com/freebsd/pkg/issues/2653).
+          release: "14.3"
           usesh: true
           prepare: |
             # Workaround for periodic FreeBSD pkg cluster breakage:
@@ -308,6 +305,9 @@ jobs:
             pkg update -f
             pkg upgrade -y
 
+            # bash, curl, git, gmake are needed by install-fpc-lazarus.sh
+            # (FPC source build uses gmake; clone uses git; FPC tarball
+            # download uses curl; install.sh uses bash).
             pkg install -y bash curl git gmake
           run: |
             set -xeuo pipefail

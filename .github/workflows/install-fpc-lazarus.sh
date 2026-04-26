@@ -183,6 +183,77 @@ EOF
   fi
 fi
 
+# ── FreeBSD: rebuild from source against the host libc ──────────────
+#
+# The FPC tarball at downloads.freepascal.org for FreeBSD is named
+# fpc-3.2.2.x86_64-freebsd11.tar — meaning it was built on FreeBSD 11.
+# FreeBSD's ABI is not stable across major versions: binaries linking
+# against the FreeBSD 11 RTL units segfault at startup on FreeBSD 13+
+# (whereas the bootstrap compiler itself happens to run, because it
+# only uses a small subset of libc that hasn't shifted).
+#
+# The compat11x/12x/13x ports that historically smoothed this over
+# are no longer in pkg repositories on FreeBSD 14.x.
+#
+# So we use the freshly-installed compiler as a stage-1 bootstrap to
+# rebuild FPC from source against the RUNNING FreeBSD's libc. The
+# stage-2 install replaces stage-1 in place. This is what every
+# distro's FPC package does internally, just done locally per-CI run.
+# It adds ~5 minutes to the FreeBSD job but is the only known fix
+# that works across FreeBSD 13/14/15.
+#
+# After bootstrap, every FPC-built binary (including lazbuild)
+# correctly links against the host's libc.so.7 and runs.
+if [ "$(uname -s)" = "FreeBSD" ]; then
+  echo "Bootstrapping FPC from source for native FreeBSD compatibility..."
+
+  # Move the freebsd11-built install aside; we'll use its compiler
+  # as the bootstrap and then replace the whole tree.
+  STAGE1_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t fpc-stage1)"
+  rmdir "$STAGE1_DIR"
+  mv "$INSTALL_PREFIX" "$STAGE1_DIR"
+  mkdir -p "$INSTALL_PREFIX"
+
+  STAGE1_FPC="$STAGE1_DIR/bin/fpc"
+
+  # Clone the exact source the binary was built from. release_3_2_2
+  # is the tag that maps to the dist-mirror tarball.
+  FPC_SRC_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t fpc-source)"
+  git clone --depth 1 --branch "release_${FPC_VERSION//./_}" \
+    https://gitlab.com/freepascal.org/fpc/source.git "$FPC_SRC_DIR"
+
+  # Build using stage-1 as bootstrap, target = host. -Cg (PIC) is
+  # required on FreeBSD per the standard build instructions.
+  $MAKE_CMD -C "$FPC_SRC_DIR" all \
+    FPC="$STAGE1_FPC" \
+    OS_TARGET=freebsd \
+    CPU_TARGET=x86_64 \
+    OPT="-Cg"
+
+  # Install stage-2 over the (now empty) install prefix. Note that
+  # install uses the just-built compiler at compiler/ppcx64, NOT the
+  # stage-1 bootstrap — that's deliberate, so the installed RTL etc.
+  # match what we just produced.
+  $MAKE_CMD -C "$FPC_SRC_DIR" install \
+    FPC="$FPC_SRC_DIR/compiler/ppcx64" \
+    OS_TARGET=freebsd \
+    CPU_TARGET=x86_64 \
+    INSTALL_PREFIX="$INSTALL_PREFIX"
+
+  # The install creates $PREFIX/lib/fpc/<ver>/ but doesn't itself
+  # generate fpc.cfg; we run samplecfg explicitly the same way
+  # install.sh would have.
+  if [ -x "$INSTALL_PREFIX/lib/fpc/$FPC_VERSION/samplecfg" ]; then
+    "$INSTALL_PREFIX/lib/fpc/$FPC_VERSION/samplecfg" \
+      "$INSTALL_PREFIX/lib/fpc/$FPC_VERSION"
+  fi
+
+  # Drop stage-1 — we don't need it anymore.
+  rm -rf "$STAGE1_DIR" "$FPC_SRC_DIR"
+
+  echo "FreeBSD bootstrap complete. Rebuilt FPC linked against host libc."
+fi
+
 # ── Windows-specific: generate fpc.cfg ───────────────────────────────
 #
 # install.sh's final step calls $LIBDIR/samplecfg, which is a POSIX

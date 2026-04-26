@@ -226,10 +226,19 @@ if [ "$(uname -s)" = "FreeBSD" ]; then
     exit 1
   fi
 
-  # Clone the exact source the binary was built from. release_3_2_2
-  # is the tag that maps to the dist-mirror tarball.
+  # Clone FPC source. We use fixes_3_2 instead of the release_3_2_2
+  # tag because FPC 3.2.2's source has a known FreeBSD ≥12
+  # incompatibility: FreeBSD 12 introduced a new struct stat layout
+  # (64-bit inode numbers, link counts, field reorderings) and the
+  # Pascal binding in 3.2.2 still uses the FreeBSD 11 layout. Any
+  # RTL function that uses stat() (FileExists, sysutils, fpmake,
+  # lazbuild, ...) reads garbage and segfaults. fixes_3_2 is the
+  # post-release maintenance branch where backports of FreeBSD
+  # compatibility patches accumulate; rebuilding from this branch
+  # gives us up-to-date struct definitions while keeping us on the
+  # 3.2.x line. See FPC issue #37784.
   FPC_SRC_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t fpc-source)"
-  git clone --depth 1 --branch "release_${FPC_VERSION//./_}" \
+  git clone --depth 1 --branch fixes_3_2 \
     https://gitlab.com/freepascal.org/fpc/source.git "$FPC_SRC_DIR"
 
   # Build using stage-1 ppcx64 as bootstrap, target = host.

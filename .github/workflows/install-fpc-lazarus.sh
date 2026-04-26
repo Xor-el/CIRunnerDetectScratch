@@ -260,10 +260,38 @@ if [ "$(uname -s)" = "FreeBSD" ]; then
   # The install creates $PREFIX/lib/fpc/<ver>/ but doesn't itself
   # generate fpc.cfg; we run samplecfg explicitly the same way
   # install.sh would have.
-  if [ -x "$INSTALL_PREFIX/lib/fpc/$FPC_VERSION/samplecfg" ]; then
-    "$INSTALL_PREFIX/lib/fpc/$FPC_VERSION/samplecfg" \
-      "$INSTALL_PREFIX/lib/fpc/$FPC_VERSION"
+  #
+  # Note: fixes_3_2 self-reports as the next-rev version (e.g. 3.2.3
+  # while it accumulates fixes), so the install path is NOT
+  # $INSTALL_PREFIX/lib/fpc/$FPC_VERSION (3.2.2) — it's whatever
+  # version the source declares. Detect it by globbing the install
+  # dir; there will be exactly one version subdir.
+  ACTUAL_VER=""
+  for d in "$INSTALL_PREFIX/lib/fpc/"*/; do
+    base="$(basename "$d")"
+    case "$base" in
+      [0-9]*.[0-9]*.[0-9]*)  ACTUAL_VER="$base"; break ;;
+    esac
+  done
+  if [ -z "$ACTUAL_VER" ]; then
+    echo "ERROR: no version dir found under $INSTALL_PREFIX/lib/fpc/" >&2
+    ls -la "$INSTALL_PREFIX/lib/fpc/" || true
+    exit 1
   fi
+  echo "Bootstrap installed FPC $ACTUAL_VER (source branch fixes_3_2)."
+
+  ACTUAL_LIBDIR="$INSTALL_PREFIX/lib/fpc/$ACTUAL_VER"
+  if [ -x "$ACTUAL_LIBDIR/samplecfg" ]; then
+    "$ACTUAL_LIBDIR/samplecfg" "$ACTUAL_LIBDIR"
+  else
+    echo "WARNING: samplecfg not found at $ACTUAL_LIBDIR/samplecfg"
+    ls -la "$ACTUAL_LIBDIR/" || true
+  fi
+
+  # Update $FPC_VERSION so the rest of the script (Lazarus build,
+  # GitHub Actions output, etc.) uses the actually-installed version
+  # rather than the script default.
+  FPC_VERSION="$ACTUAL_VER"
 
   # Drop stage-1 — we don't need it anymore.
   rm -rf "$STAGE1_DIR" "$FPC_SRC_DIR"

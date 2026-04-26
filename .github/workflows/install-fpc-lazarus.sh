@@ -12,7 +12,7 @@
 #
 #  Inputs (env vars):
 #    FPC_TARGET     e.g. x86_64-linux, aarch64-darwin, x86_64-win64
-#    FPC_VERSION    FPC release version (default: 3.2.2)
+#    FPC_VERSION    FPC release version, e.g. 3.2.2
 #    INSTALL_PREFIX where FPC is installed (default: $HOME/fpc-install)
 #    LAZARUS_DIR    where Lazarus source is cloned and built
 #                   (default: $HOME/lazarus-src)
@@ -27,7 +27,7 @@
 
 set -xeuo pipefail
 
-: "${FPC_VERSION:=3.2.2}"
+: "${FPC_VERSION:?FPC_VERSION is required (e.g. 3.2.2)}"
 : "${FPC_TARGET:?FPC_TARGET is required (e.g. x86_64-linux)}"
 : "${LAZARUS_BRANCH:?LAZARUS_BRANCH is required}"
 : "${LAZARUS_REPO:?LAZARUS_REPO is required}"

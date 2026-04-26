@@ -250,21 +250,37 @@ else
 fi
 
 # ── Write Lazarus environmentoptions.xml ─────────────────────────────
-# lazbuild reads this to locate the Lazarus source tree and the FPC
-# compiler. Without it, lazbuild errors on first run.
+# lazbuild reads this on startup to locate the Lazarus source tree
+# and the FPC compiler. Without it, lazbuild emits:
+#   Error: (lazbuild) Invalid Lazarus directory "": directory lcl not found
 #
-# On Windows, lazbuild is a native PE binary that expects Windows-
-# style paths in this XML. Convert MSYS paths if needed.
-LAZ_CFG_DIR="${HOME}/.lazarus"
-mkdir -p "$LAZ_CFG_DIR"
-
+# The location lazbuild looks at is platform-specific:
+#   Unix:    $HOME/.lazarus/                                      (dotted)
+#   Windows: %LOCALAPPDATA%\lazarus\           — NOT %APPDATA%, NOT dotted
+#
+# The Windows path comes from Lazarus's lazbaseconf.inc:
+#   PrimaryConfigPath := ExtractFilePath(ChompPathDelim(
+#                          GetAppConfigDirUTF8(False))) + 'lazarus';
+# where GetAppConfigDir(False) on Windows resolves via
+# CSIDL_LOCAL_APPDATA to %LOCALAPPDATA%\<appname>\, so the parent +
+# 'lazarus' is %LOCALAPPDATA%\lazarus\ (no leading dot).
+#
+# On Windows, lazbuild is a native PE binary and expects Windows-
+# style paths in the XML values, so we cygpath them to backslash form.
 if [ "$IS_WINDOWS" = "1" ]; then
+  # On Windows runners $LOCALAPPDATA is set; fall back to the
+  # well-known location if it isn't.
+  WIN_LOCALAPPDATA="${LOCALAPPDATA:-$USERPROFILE/AppData/Local}"
+  LAZ_CFG_DIR="$(cygpath -u "$WIN_LOCALAPPDATA")/lazarus"
   LAZ_DIR_NATIVE="$(cygpath -w "$LAZARUS_DIR")"
   FPC_EXE_NATIVE="$(cygpath -w "$FPC_EXE")"
 else
+  LAZ_CFG_DIR="${HOME}/.lazarus"
   LAZ_DIR_NATIVE="$LAZARUS_DIR"
   FPC_EXE_NATIVE="$FPC_EXE"
 fi
+
+mkdir -p "$LAZ_CFG_DIR"
 
 cat > "$LAZ_CFG_DIR/environmentoptions.xml" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>

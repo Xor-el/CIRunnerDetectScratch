@@ -285,10 +285,16 @@ jobs:
         uses: vmactions/freebsd-vm@v1
         with:
           envs: FPC_VERSION LAZARUS_BRANCH LAZARUS_REPO
-          # Pinned to 14.3 to avoid the broken FreeBSD:15:amd64 pkg
-          # cluster (see https://github.com/freebsd/pkg/issues/2653).
-          # Revisit once 15.x package infrastructure stabilises.
-          release: "14.3"
+          # Pinned to 13.5: FPC 3.2.2's binary was built on FreeBSD 11
+          # (tarball: fpc-3.2.2.x86_64-freebsd11.tar) and binaries
+          # built on freebsd11 segfault on FreeBSD 14+ even with
+          # compat libraries — and compat11x/12x/13x are no longer
+          # available in pkg repositories on FreeBSD 14.x. FreeBSD 13
+          # is the closest still-available major version that keeps
+          # ABI compatibility with FreeBSD 11 binaries (libc.so.7
+          # remained the libc major across 11→13). 13.5 is the final
+          # 13.x release and entered extended support in 2025.
+          release: "13.5"
           usesh: true
           prepare: |
             # Workaround for periodic FreeBSD pkg cluster breakage:
@@ -302,15 +308,7 @@ jobs:
             pkg update -f
             pkg upgrade -y
 
-            # FPC 3.2.2's freebsd binary was built on FreeBSD 11 (note
-            # tarball name: fpc-3.2.2.x86_64-freebsd11.tar). FreeBSD's
-            # ABI breaks across major versions, and compat libraries
-            # are cumulative — to run a FreeBSD 11 binary on FreeBSD
-            # 14, we need compat11x + compat12x + compat13x. Without
-            # this chain, lazbuild and any other FPC-built binary
-            # segfaults on FreeBSD 14.
-            pkg install -y bash curl git gmake \
-                           compat11x compat12x compat13x
+            pkg install -y bash curl git gmake
           run: |
             set -xeuo pipefail
             export FPC_TARGET=x86_64-freebsd

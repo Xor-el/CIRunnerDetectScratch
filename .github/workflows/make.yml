@@ -308,7 +308,16 @@ jobs:
             # bash, curl, git, gmake are needed by install-fpc-lazarus.sh
             # (FPC source build uses gmake; clone uses git; FPC tarball
             # download uses curl; install.sh uses bash).
-            pkg install -y bash curl git gmake
+            #
+            # binutils is needed for the FreeBSD source-bootstrap step:
+            # FPC's build invokes `as` to assemble the RTL startup
+            # objects (prt0.o, cprt0.o, ...), and FreeBSD's base only
+            # ships the LLVM toolchain — GNU as has to come from the
+            # binutils port. binutils also provides /usr/local/bin/ld
+            # (GNU ld.bfd), which FPC links against by convention; the
+            # FreeBSD ports tree's lang/fpc explicitly depends on
+            # binutils for the same reason.
+            pkg install -y bash curl git gmake binutils
           run: |
             set -xeuo pipefail
             export FPC_TARGET=x86_64-freebsd

@@ -438,9 +438,6 @@ jobs:
     # but will NOT fix the DNS resolver bug. The /etc/hosts workaround
     # and LD_LIBRARY_PATH below will still be needed.
     #
-    # NOTE: The DragonFlyBSD tarball on the FPC mirror was rebuilt on
-    # 2026-04-09 — worth re-testing whether anything has improved.
-    #
     # Lazarus has no DragonFlyBSD lazconf.inc, but DragonFlyBSD is a
     # FreeBSD derivative so the FreeBSD include works as-is. The
     # shared installer script patches it in after cloning Lazarus.

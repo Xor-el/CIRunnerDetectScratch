@@ -214,7 +214,17 @@ if [ "$(uname -s)" = "FreeBSD" ]; then
   mv "$INSTALL_PREFIX" "$STAGE1_DIR"
   mkdir -p "$INSTALL_PREFIX"
 
-  STAGE1_FPC="$STAGE1_DIR/bin/fpc"
+  # The FPC Makefile expects FPC= to point at the architecture-
+  # specific compiler binary (ppcx64 for x86_64), NOT the 'fpc'
+  # wrapper script. Passing the wrapper makes the Makefile fail to
+  # parse the target triple and emit nonsense like
+  #   "OS_TARGET=be CPU_TARGET=ppcx64 ... target ppcx64-be"
+  STAGE1_PPCX64="$STAGE1_DIR/lib/fpc/$FPC_VERSION/ppcx64"
+  if [ ! -x "$STAGE1_PPCX64" ]; then
+    echo "ERROR: stage-1 ppcx64 not at $STAGE1_PPCX64" >&2
+    ls -la "$STAGE1_DIR/lib/fpc/$FPC_VERSION/" || true
+    exit 1
+  fi
 
   # Clone the exact source the binary was built from. release_3_2_2
   # is the tag that maps to the dist-mirror tarball.
@@ -222,18 +232,16 @@ if [ "$(uname -s)" = "FreeBSD" ]; then
   git clone --depth 1 --branch "release_${FPC_VERSION//./_}" \
     https://gitlab.com/freepascal.org/fpc/source.git "$FPC_SRC_DIR"
 
-  # Build using stage-1 as bootstrap, target = host. -Cg (PIC) is
-  # required on FreeBSD per the standard build instructions.
+  # Build using stage-1 ppcx64 as bootstrap, target = host.
   $MAKE_CMD -C "$FPC_SRC_DIR" all \
-    FPC="$STAGE1_FPC" \
+    FPC="$STAGE1_PPCX64" \
     OS_TARGET=freebsd \
-    CPU_TARGET=x86_64 \
-    OPT="-Cg"
+    CPU_TARGET=x86_64
 
-  # Install stage-2 over the (now empty) install prefix. Note that
-  # install uses the just-built compiler at compiler/ppcx64, NOT the
-  # stage-1 bootstrap — that's deliberate, so the installed RTL etc.
-  # match what we just produced.
+  # Install stage-2 over the (now empty) install prefix. Use the
+  # freshly-built compiler at compiler/ppcx64 — that's what the FPC
+  # build wiki recommends (the source-tree compiler, not stage-1) so
+  # the installed RTL etc. match what we just produced.
   $MAKE_CMD -C "$FPC_SRC_DIR" install \
     FPC="$FPC_SRC_DIR/compiler/ppcx64" \
     OS_TARGET=freebsd \

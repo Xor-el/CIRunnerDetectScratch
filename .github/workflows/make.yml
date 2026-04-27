@@ -54,7 +54,6 @@ jobs:
   #
   #  To disable a target permanently, remove its ID from DEFAULT.
   #  Currently disabled (absent from DEFAULT):
-  #    - linux-arm32     : QEMU emulation is slow
   #    - netbsd          : package server intermittently times out
   #    - dragonflybsd    : FPC 3.2.x TLS broken (see job comments)
   #

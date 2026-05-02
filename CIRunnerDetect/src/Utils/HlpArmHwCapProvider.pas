@@ -143,11 +143,11 @@ var
 begin
   FGetAuxVal := nil;
 
-  {$IFDEF FPC}
+{$IFDEF FPC}
   LHandle := NativeUInt(dlopen(nil, RTLD_NOW));
-  {$ELSE}
+{$ELSE}
   LHandle := dlopen(nil, RTLD_NOW);
-  {$ENDIF}
+{$ENDIF}
 
   if LHandle = 0 then
     Exit;
@@ -188,11 +188,11 @@ var
 begin
   FElfAuxInfo := nil;
 
-  {$IFDEF FPC}
+{$IFDEF FPC}
   LHandle := NativeUInt(dlopen(nil, RTLD_NOW));
-  {$ELSE}
+{$ELSE}
   LHandle := dlopen(nil, RTLD_NOW);
-  {$ENDIF}
+{$ENDIF}
 
   if LHandle = 0 then
     Exit;

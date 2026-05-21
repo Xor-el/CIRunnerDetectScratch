@@ -20,18 +20,19 @@
   {$IF CompilerVersion < 21.0}
     {$MESSAGE ERROR 'This Library requires Delphi 2010 or higher.'}
   {$IFEND}
-  
+
+  // Silence H2586 (legacy $IFEND) on XE4+ where $ENDIF can also close $IF.
+  // The $LEGACYIFEND directive itself was introduced in XE4 (25.0), so the
+  // guard is necessary to keep Delphi 2010 / XE / XE2 / XE3 compiling.
+  {$IF CompilerVersion >= 25.0}
+    {$LEGACYIFEND ON}
+  {$IFEND}
+
   {$DEFINE DELPHI}
 
   {$DEFINITIONINFO ON} // Enable code browsing (Ctrl+Click)
   {$STRINGCHECKS OFF}
   {$WARN DUPLICATE_CTOR_DTOR OFF}
-
-  {$DEFINE HASHLIB_LITTLE_ENDIAN}
-
-  {$IFDEF CPUARM}
-    {$DEFINE HASHLIB_REQUIRES_PROPER_ALIGNMENT}
-  {$ENDIF}
 
   {$DEFINE USE_UNROLLED_VARIANT}
 
@@ -43,21 +44,34 @@
     {$DEFINE HASHLIB_USE_PPL} // Use Parallel Programming Library
   {$IFEND}
 
-  {============================== CPU Architecture ==============================}
+  {============================= CPU Architecture =============================}
 
-  {$IF DEFINED(CPU386)}
+  {$DEFINE HASHLIB_LITTLE_ENDIAN}
+
+  {$IFDEF CPUARM}
+    {$DEFINE HASHLIB_REQUIRES_PROPER_ALIGNMENT}
+  {$ENDIF}
+
+  // CPUX86 was introduced in XE2; older Delphi versions (2010, XE) only
+  // have CPU386. On XE2+, CPUX86 alone is sufficient. The CPU386 fallback
+  // covers 2010/XE - those versions had no 64-bit compiler, so the
+  // CPU64BITS guard is harmless there (CPU64BITS itself was introduced
+  // in XE8). The guard's real purpose is DCCOSX64 (64-bit Intel macOS,
+  // available since 10.3 Rio Release 2), where Embarcadero's docs
+  // indicate CPU386 is defined alongside CPU64BITS on a 64-bit target.
+  {$IF DEFINED(CPUX86) OR (DEFINED(CPU386) AND NOT DEFINED(CPU64BITS))}
     {$DEFINE HASHLIB_I386}
     {$IFDEF MSWINDOWS}
       {$DEFINE HASHLIB_I386_ASM}
     {$ENDIF}
   {$IFEND}
 
-  {$IF DEFINED(CPUX64)}
+  {$IFDEF CPUX64}
     {$DEFINE HASHLIB_X86_64}
     {$IFDEF MSWINDOWS}
       {$DEFINE HASHLIB_X86_64_ASM}
     {$ENDIF}
-  {$IFEND}
+  {$ENDIF}
 
   {$IFDEF CPUARM32}
     {$DEFINE HASHLIB_ARM32}
@@ -67,7 +81,7 @@
     {$DEFINE HASHLIB_AARCH64}
   {$ENDIF}
 
-  {================================= Target OS ==================================}
+  {================================ Target OS =================================}
 
   {$IFDEF MSWINDOWS}
     {$DEFINE HASHLIB_MSWINDOWS}
@@ -93,6 +107,12 @@
 
 {$ENDIF}
 
+{========================== Common Feature Detection ==========================}
+
+{$IF DEFINED(HASHLIB_LITTLE_ENDIAN) AND NOT DEFINED(HASHLIB_REQUIRES_PROPER_ALIGNMENT)}
+  {$DEFINE HASHLIB_HAS_FAST_UNALIGNED_ACCESS_LE}
+{$IFEND}
+
 {========================== Common Compiler Settings ==========================}
 
 {$HINTS OFF}
@@ -114,6 +134,10 @@
 
 {============================ Common SIMD Settings ============================}
 
+{$IF DEFINED(HASHLIB_X86_64) AND NOT DEFINED(HASHLIB_MSWINDOWS)}
+  {$DEFINE HASHLIB_SYSV_X64_ABI}
+{$IFEND}
+
 // Uncomment to force scalar dispatch (available on all platforms):
 // {$DEFINE HASHLIB_FORCE_SCALAR}
 
@@ -126,27 +150,32 @@
 {$IFEND}
 
 {$IFDEF HASHLIB_X86_SIMD}
-// Uncomment ONE to force a specific X86 SIMD dispatch level:
+// Uncomment at most ONE to force a specific X86 SIMD dispatch level:
 // {$DEFINE HASHLIB_FORCE_SSE2}
+// {$DEFINE HASHLIB_FORCE_SSE3}
 // {$DEFINE HASHLIB_FORCE_SSSE3}
+// {$DEFINE HASHLIB_FORCE_SSE41}
+// {$DEFINE HASHLIB_FORCE_SSE42}
 
-{$IF (DEFINED(HASHLIB_FORCE_SCALAR) AND DEFINED(HASHLIB_FORCE_SSE2))
-  OR (DEFINED(HASHLIB_FORCE_SCALAR) AND DEFINED(HASHLIB_FORCE_SSSE3))
-  OR (DEFINED(HASHLIB_FORCE_SSE2) AND DEFINED(HASHLIB_FORCE_SSSE3))}
-  {$MESSAGE ERROR 'Only one HASHLIB_FORCE_* define may be enabled at a time.'}
+{$IF (DEFINED(HASHLIB_FORCE_SCALAR) AND (DEFINED(HASHLIB_FORCE_SSE2) OR DEFINED(HASHLIB_FORCE_SSE3) OR DEFINED(HASHLIB_FORCE_SSSE3) OR DEFINED(HASHLIB_FORCE_SSE41) OR DEFINED(HASHLIB_FORCE_SSE42)))
+   OR (DEFINED(HASHLIB_FORCE_SSE2) AND (DEFINED(HASHLIB_FORCE_SSE3) OR DEFINED(HASHLIB_FORCE_SSSE3) OR DEFINED(HASHLIB_FORCE_SSE41) OR DEFINED(HASHLIB_FORCE_SSE42)))
+   OR (DEFINED(HASHLIB_FORCE_SSE3) AND (DEFINED(HASHLIB_FORCE_SSSE3) OR DEFINED(HASHLIB_FORCE_SSE41) OR DEFINED(HASHLIB_FORCE_SSE42)))
+   OR (DEFINED(HASHLIB_FORCE_SSSE3) AND (DEFINED(HASHLIB_FORCE_SSE41) OR DEFINED(HASHLIB_FORCE_SSE42)))
+   OR (DEFINED(HASHLIB_FORCE_SSE41) AND DEFINED(HASHLIB_FORCE_SSE42))}
+  {$MESSAGE ERROR 'Only one HASHLIB_FORCE_* (X86 Level) define may be enabled at a time.'}
 {$IFEND}
 
 {$ENDIF}
 
 {$IFDEF HASHLIB_ARM_SIMD}
-// Uncomment ONE to force a specific Arm SIMD dispatch level:
+// Uncomment at most ONE to force a specific Arm SIMD dispatch level:
 // {$DEFINE HASHLIB_FORCE_NEON}
 // {$DEFINE HASHLIB_FORCE_SVE}
 
 {$IF (DEFINED(HASHLIB_FORCE_SCALAR) AND DEFINED(HASHLIB_FORCE_NEON))
-  OR (DEFINED(HASHLIB_FORCE_SCALAR) AND DEFINED(HASHLIB_FORCE_SVE))
-  OR (DEFINED(HASHLIB_FORCE_NEON) AND DEFINED(HASHLIB_FORCE_SVE))}
-  {$MESSAGE ERROR 'Only one HASHLIB_FORCE_* define may be enabled at a time.'}
+   OR (DEFINED(HASHLIB_FORCE_SCALAR) AND DEFINED(HASHLIB_FORCE_SVE))
+   OR (DEFINED(HASHLIB_FORCE_NEON) AND DEFINED(HASHLIB_FORCE_SVE))}
+  {$MESSAGE ERROR 'Only one HASHLIB_FORCE_* (Arm Level) define may be enabled at a time.'}
 {$IFEND}
 
 {$ENDIF}

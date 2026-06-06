@@ -18,8 +18,11 @@
 #                   (default: $HOME/lazarus-src)
 #    LAZARUS_BRANCH branch/tag to clone, e.g. lazarus_4_4
 #    LAZARUS_REPO   git URL
-#    MAKE_CMD       'make' on Linux/Windows/macOS, 'gmake' on BSD/Solaris
-#                   (auto-detected if unset)
+#    MAKE_CMD            'make' on Linux/Windows/macOS, 'gmake' on BSD/Solaris
+#                        (auto-detected if unset)
+#    MAKE_BUILD_BACKEND  auto | lazbuild | fpc
+#                        fpc = FPC only (no lazbuild). Used on powerpc64-linux
+#                        under QEMU where compiling LCL is unreliable.
 #
 #  Outputs (appended to $GITHUB_PATH if set):
 #    $INSTALL_PREFIX/bin and $LAZARUS_DIR are added to PATH
@@ -29,8 +32,19 @@ set -xeuo pipefail
 
 : "${FPC_VERSION:?FPC_VERSION is required (e.g. 3.2.2)}"
 : "${FPC_TARGET:?FPC_TARGET is required (e.g. x86_64-linux)}"
-: "${LAZARUS_BRANCH:?LAZARUS_BRANCH is required}"
-: "${LAZARUS_REPO:?LAZARUS_REPO is required}"
+: "${MAKE_BUILD_BACKEND:?MAKE_BUILD_BACKEND is required (lazbuild|fpc|auto)}"
+case "$MAKE_BUILD_BACKEND" in
+  fpc)    INSTALL_LAZARUS=0 ;;
+  auto|lazbuild) INSTALL_LAZARUS=1 ;;
+  *)
+    echo "unknown MAKE_BUILD_BACKEND: $MAKE_BUILD_BACKEND" >&2
+    exit 1
+    ;;
+esac
+if [ "$INSTALL_LAZARUS" = "1" ]; then
+  : "${LAZARUS_BRANCH:?LAZARUS_BRANCH is required}"
+  : "${LAZARUS_REPO:?LAZARUS_REPO is required}"
+fi
 
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)   IS_WINDOWS=1 ;;
@@ -226,6 +240,13 @@ fpc -iSP
 #   - The packaged Lazarus on Linux/Windows pulls in the full IDE
 #     (GTK / Qt / native widgets), which we don't need.
 #   - lazbuild builds in ~1–2 minutes; cheap relative to the FPC fetch.
+#
+# MAKE_BUILD_BACKEND=fpc: FPC-only install (powerpc64 BE under QEMU).
+
+if [ "$INSTALL_LAZARUS" = "0" ]; then
+  echo "MAKE_BUILD_BACKEND=fpc — FPC install complete (lazbuild skipped)."
+  exit 0
+fi
 
 git clone --depth 1 --branch "$LAZARUS_BRANCH" "$LAZARUS_REPO" "$LAZARUS_DIR"
 

@@ -100,6 +100,11 @@ fp.dsk
 backup/
 *.bak
 lib/
+!.github/
+!.github/workflows/
+!.github/workflows/ci/
+!.github/workflows/ci/lib/
+!.github/workflows/ci/lib/common.sh
 
 # Application bundle for Mac OS
 *.app/

@@ -9,8 +9,9 @@ set -euo pipefail
 # Cross-compile glibc csu stubs on the x86 host. gcc inside QEMU ppc64
 # user-mode often SIGSEGVs; install-fpc-lazarus.sh expects CSU_STUBS_PREBUILT.
 STUB_C="$(mktemp)"
-STUB_OBJ="${GITHUB_WORKSPACE}/.github/workflows/ci/.csu_stubs.powerpc64-linux.o"
-trap 'rm -f "$STUB_C"' EXIT
+STUB_OBJ="$(mktemp --suffix=.o)"
+CSU_STUBS_IN_CONTAINER=/csu_stubs_prebuilt.o
+trap 'rm -f "$STUB_C" "$STUB_OBJ"' EXIT
 
 cat > "$STUB_C" <<'EOF'
 /* glibc 2.34+ removed __libc_csu_init / __libc_csu_fini. FPC 3.2.2's
@@ -23,15 +24,21 @@ EOF
 sudo apt-get update -qq
 sudo apt-get install -y -qq gcc-powerpc64-linux-gnu
 powerpc64-linux-gnu-gcc -c -fPIC -o "$STUB_OBJ" "$STUB_C"
+if [ ! -s "$STUB_OBJ" ]; then
+  echo "::error::cross-compile did not produce csu stubs object at $STUB_OBJ" >&2
+  exit 1
+fi
+echo "csu stubs cross-compiled: $(wc -c < "$STUB_OBJ") bytes"
 
 docker run --rm --platform linux/ppc64 \
   --security-opt seccomp=unconfined \
   -v "${GITHUB_WORKSPACE}:/work" -w /work \
+  -v "${STUB_OBJ}:${CSU_STUBS_IN_CONTAINER}:ro" \
   -e FPC_VERSION \
   -e FPC_TARGET \
   -e MAKE_BUILD_BACKEND \
   -e DEBIAN_FRONTEND=noninteractive \
   -e QEMU_CPU=power8 \
-  -e CSU_STUBS_PREBUILT="/work/.github/workflows/ci/.csu_stubs.powerpc64-linux.o" \
+  -e CSU_STUBS_PREBUILT="${CSU_STUBS_IN_CONTAINER}" \
   urbanogilson/debian-debootstrap-ports:ppc64-forky-sid \
   bash .github/workflows/ci/ppc64-be-inner.sh

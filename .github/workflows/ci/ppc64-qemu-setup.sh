@@ -17,14 +17,11 @@ docker run --rm --platform linux/ppc64 \
       echo "::error::BE ppc64 preflight: expected uname ppc64, got ${m}" >&2
       exit 1
     fi
-    elf=$(file -b /bin/bash)
-    echo "/bin/bash: ${elf}"
-    if echo "${elf}" | grep -qi "LSB"; then
-      echo "::error::BE ppc64 preflight: userspace is little-endian ELF" >&2
-      exit 1
-    fi
-    if ! echo "${elf}" | grep -qi "MSB"; then
-      echo "::error::BE ppc64 preflight: /bin/bash is not big-endian MSB ELF" >&2
+    # ELF e_ident[EI_DATA] at byte 5: 1=LE, 2=BE (no file(1) in minimal image)
+    elf_data=$(od -An -j 5 -N 1 -t u1 /bin/bash | tr -d " ")
+    echo "/bin/bash ELF data encoding: ${elf_data} (2=BE/MSB, 1=LE/LSB)"
+    if [ "${elf_data}" != "2" ]; then
+      echo "::error::BE ppc64 preflight: expected MSB ELF (2), got ${elf_data}" >&2
       exit 1
     fi
     echo "BE ppc64 preflight OK"

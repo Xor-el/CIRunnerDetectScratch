@@ -45,6 +45,18 @@ EOF
   rm -f "${tmp}" "${tmp}.c"
 }
 
+ci_elf_endian() {
+  # ELF e_ident[EI_DATA] byte 5: 1=LE, 2=BE. Empty if not ELF.
+  local path="$1" data
+  [ -f "$path" ] || return 1
+  data="$(od -An -j 5 -N 1 -t u1 "$path" 2>/dev/null | tr -d ' ')"
+  case "$data" in
+    1) echo "little" ;;
+    2) echo "big" ;;
+    *) echo "unknown" ;;
+  esac
+}
+
 ci_assert_powerpc64_be() {
   [ "${FPC_TARGET:-}" = "powerpc64-linux" ] || return 0
 
@@ -68,19 +80,18 @@ ci_assert_powerpc64_be() {
   fi
 
   if [ -f /bin/bash ]; then
-    echo "::notice::/bin/bash ELF: $(file -b /bin/bash | cut -d, -f1-2)"
-    if file -b /bin/bash | grep -qi 'LSB'; then
-      echo "::error::userspace /bin/bash is little-endian ELF; expected MSB for BE ppc64" >&2
+    echo "::notice::/bin/bash ELF endian: $(ci_elf_endian /bin/bash)"
+    if [ "$(ci_elf_endian /bin/bash)" = "little" ]; then
+      echo "::error::userspace /bin/bash is little-endian ELF; expected BE for ppc64" >&2
       exit 1
     fi
   fi
 
   backend="${INSTALL_PREFIX:-$HOME/fpc-install}/bin/ppcppc64"
   if [ -f "$backend" ]; then
-    elfinfo="$(file -b "$backend")"
-    echo "::notice::ppcppc64 ELF: ${elfinfo}"
-    if echo "$elfinfo" | grep -qi 'LSB'; then
-      echo "::error::ppcppc64 is little-endian ELF; expected MSB for powerpc64-linux" >&2
+    echo "::notice::ppcppc64 ELF endian: $(ci_elf_endian "$backend")"
+    if [ "$(ci_elf_endian "$backend")" = "little" ]; then
+      echo "::error::ppcppc64 is little-endian ELF; expected BE for powerpc64-linux" >&2
       exit 1
     fi
   fi

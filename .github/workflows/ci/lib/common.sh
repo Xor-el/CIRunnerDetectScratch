@@ -22,29 +22,6 @@ ci_export_toolchain_path() {
   fi
 }
 
-ci_runtime_byteorder() {
-  # Reliable process endian probe (lscpu often lies under QEMU user-mode).
-  local tmp
-  tmp="$(mktemp)"
-  cat > "${tmp}.c" <<'EOF'
-#include <stdio.h>
-int main(void) {
-  int x = 1;
-  return *(const char *)&x;
-}
-EOF
-  if cc -o "${tmp}" "${tmp}.c" 2>/dev/null; then
-    if "${tmp}"; then
-      echo "little"
-    else
-      echo "big"
-    fi
-  else
-    echo "unknown"
-  fi
-  rm -f "${tmp}" "${tmp}.c"
-}
-
 ci_elf_endian() {
   # ELF e_ident[EI_DATA] byte 5: 1=LE, 2=BE. Empty if not ELF.
   local path="$1" data
@@ -60,7 +37,7 @@ ci_elf_endian() {
 ci_assert_powerpc64_be() {
   [ "${FPC_TARGET:-}" = "powerpc64-linux" ] || return 0
 
-  local machine byteorder backend elfinfo
+  local machine bash_endian backend_endian
   machine="$(uname -m)"
   echo "::notice::kernel $(uname -s) ${machine}"
 
@@ -72,16 +49,10 @@ ci_assert_powerpc64_be() {
     echo "::warning::unexpected uname -m ${machine} for powerpc64-linux" >&2
   fi
 
-  byteorder="$(ci_runtime_byteorder)"
-  echo "::notice::runtime byteorder: ${byteorder}"
-  if [ "$byteorder" = "little" ]; then
-    echo "::error::powerpc64-linux BE CI but runtime byteorder is little" >&2
-    exit 1
-  fi
-
   if [ -f /bin/bash ]; then
-    echo "::notice::/bin/bash ELF endian: $(ci_elf_endian /bin/bash)"
-    if [ "$(ci_elf_endian /bin/bash)" = "little" ]; then
+    bash_endian="$(ci_elf_endian /bin/bash)"
+    echo "::notice::/bin/bash ELF endian: ${bash_endian}"
+    if [ "$bash_endian" = "little" ]; then
       echo "::error::userspace /bin/bash is little-endian ELF; expected BE for ppc64" >&2
       exit 1
     fi
@@ -89,8 +60,9 @@ ci_assert_powerpc64_be() {
 
   backend="${INSTALL_PREFIX:-$HOME/fpc-install}/bin/ppcppc64"
   if [ -f "$backend" ]; then
-    echo "::notice::ppcppc64 ELF endian: $(ci_elf_endian "$backend")"
-    if [ "$(ci_elf_endian "$backend")" = "little" ]; then
+    backend_endian="$(ci_elf_endian "$backend")"
+    echo "::notice::ppcppc64 ELF endian: ${backend_endian}"
+    if [ "$backend_endian" = "little" ]; then
       echo "::error::ppcppc64 is little-endian ELF; expected BE for powerpc64-linux" >&2
       exit 1
     fi
@@ -98,7 +70,7 @@ ci_assert_powerpc64_be() {
 
   if command -v lscpu >/dev/null 2>&1; then
     lscpu 2>/dev/null | grep -i 'byte order' \
-      | sed 's/^/::notice::lscpu (often wrong under QEMU; trust runtime byteorder): /' \
+      | sed 's/^/::notice::lscpu (often wrong under QEMU; trust ELF endian): /' \
       || true
   fi
 }

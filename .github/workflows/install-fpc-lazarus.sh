@@ -170,14 +170,14 @@ fi
 # pre-built tarball we provide empty stub symbols ourselves.
 #
 # Affected: every Linux target (x86_64, aarch64, arm/armhf, powerpc64).
-# Merging stubs into rtl/cprt0.o alone worked on most arches but not on
-# powerpc64-linux, where si_c.o also references these symbols. Linking a
-# shared csu_stubs.o on every build (via -k in fpc.cfg) covers cprt0.o,
-# si_c.o, and the rest. Do not also merge into cprt0.o — that defines
-# the symbols twice and breaks linking (multiple definition errors).
 #
-# We install csu_stubs.o under $INSTALL_PREFIX/lib/fpc/… and append
-# -k<stub> to fpc.cfg.
+# Strategy differs by target:
+#   • x86_64 / aarch64 / arm — merge csu_stubs.o into rtl/cprt0.o only.
+#     Do not add -k to fpc.cfg (duplicate symbols if both are used).
+#   • powerpc64-linux — si_c.o also references these symbols, so append
+#     -k<stub> to fpc.cfg and do not merge into cprt0.o. The stub object
+#     is cross-compiled on the x86 host (CSU_STUBS_PREBUILT); running cc
+#     inside QEMU user-mode for ppc64 is unreliable.
 #
 # This hack can be removed once we move to FPC 3.2.4+.
 #
@@ -185,16 +185,19 @@ fi
 if [ "$(uname -s)" = "Linux" ]; then
   STUB_INSTALL="$INSTALL_PREFIX/lib/fpc/$FPC_VERSION/csu_stubs.o"
   STUB_C="$WORK_DIR/csu_stubs.c"
-  cat > "$STUB_C" <<'EOF'
+  RTL_DIR="$INSTALL_PREFIX/lib/fpc/$FPC_VERSION/units/$FPC_TARGET/rtl"
+  CPRT0="$RTL_DIR/cprt0.o"
+
+  write_csu_stubs_c() {
+    cat > "$1" <<'EOF'
 /* glibc 2.34+ removed __libc_csu_init / __libc_csu_fini. FPC 3.2.2's
    RTL still references them. Provide empty stubs so the linker
    is satisfied. */
 void __libc_csu_init(int argc, char **argv, char **envp) { (void)argc; (void)argv; (void)envp; }
 void __libc_csu_fini(void) {}
 EOF
-  cc -c -fPIC -o "$STUB_INSTALL" "$STUB_C"
+  }
 
-  # Link csu_stubs.o on every compile (cprt0.o, si_c.o, …).
   FPC_CFG_MARKER="# glibc 2.34+ csu stubs (install-fpc-lazarus.sh)"
   append_fpc_cfg() {
     local cfg
@@ -209,24 +212,40 @@ EOF
       fi
     done
   }
-  append_fpc_cfg "-k$STUB_INSTALL"
 
-  # Debian ppc64 images often need an explicit crt search path for crti.o/crtn.o.
-  if [ "$FPC_TARGET" = "powerpc64-linux" ] && command -v gcc >/dev/null 2>&1; then
-    CRT_DIR="$(dirname "$(gcc -print-file-name=crti.o)")"
-    if [ -f "$CRT_DIR/crti.o" ]; then
-      CRT_MARKER="# powerpc64-linux crt paths (install-fpc-lazarus.sh)"
-      for cfg in /etc/fpc.cfg "${HOME}/.fpc.cfg"; do
-        if [ -f "$cfg" ] && ! grep -qF "$CRT_MARKER" "$cfg" 2>/dev/null; then
-          {
-            echo ""
-            echo "$CRT_MARKER"
-            echo "-Fl$CRT_DIR"
-            echo "-k-L$CRT_DIR"
-          } >> "$cfg"
-          echo "Updated $cfg with crt search path $CRT_DIR"
-        fi
-      done
+  if [ "$FPC_TARGET" = "powerpc64-linux" ]; then
+    if [ -z "${CSU_STUBS_PREBUILT:-}" ] || [ ! -f "$CSU_STUBS_PREBUILT" ]; then
+      echo "ERROR: CSU_STUBS_PREBUILT is required for powerpc64-linux" >&2
+      echo "       (host must cross-compile csu stubs before QEMU docker run)" >&2
+      exit 1
+    fi
+    cp "$CSU_STUBS_PREBUILT" "$STUB_INSTALL"
+    append_fpc_cfg "-k$STUB_INSTALL"
+
+    if command -v gcc >/dev/null 2>&1; then
+      CRT_DIR="$(dirname "$(gcc -print-file-name=crti.o)")"
+      if [ -f "$CRT_DIR/crti.o" ]; then
+        CRT_MARKER="# powerpc64-linux crt paths (install-fpc-lazarus.sh)"
+        for cfg in /etc/fpc.cfg "${HOME}/.fpc.cfg"; do
+          if [ -f "$cfg" ] && ! grep -qF "$CRT_MARKER" "$cfg" 2>/dev/null; then
+            {
+              echo ""
+              echo "$CRT_MARKER"
+              echo "-Fl$CRT_DIR"
+              echo "-k-L$CRT_DIR"
+            } >> "$cfg"
+            echo "Updated $cfg with crt search path $CRT_DIR"
+          fi
+        done
+      fi
+    fi
+  else
+    write_csu_stubs_c "$STUB_C"
+    cc -c -fPIC -o "$WORK_DIR/csu_stubs.o" "$STUB_C"
+    if [ -f "$CPRT0" ]; then
+      ld -r -o "$CPRT0.new" "$CPRT0" "$WORK_DIR/csu_stubs.o"
+      mv "$CPRT0.new" "$CPRT0"
+      echo "Patched $CPRT0 with glibc 2.34+ stubs."
     fi
   fi
 fi

@@ -93,6 +93,8 @@ type
     property TargetBinary: string read FTargetBinary;
   end;
 
+  TDepIndexProc = procedure(DepIdx: Integer);
+
   TLpkPackage = class
   private
     FLpkPath: string;
@@ -114,6 +116,7 @@ type
     property RequiredNames: TStringList read FRequiredNames;
     property StubPas: string read FStubPas;
     property HasLclDependency: Boolean read FHasLclDependency;
+    class function HasLclDependencyInFile(const ALpkPath: string): Boolean;
   end;
 
   TPackageGraph = class
@@ -124,6 +127,8 @@ type
     function GetPackage(Index: Integer): TLpkPackage;
     function FindIndexByName(const AName: string): Integer;
     function IsBuiltinPackage(const AName: string): Boolean;
+    procedure ForEachPackageDependency(const AIndex: Integer;
+      const AProc: TDepIndexProc);
     procedure CollectBuildOrder(const AIndex: Integer; AOrder: TList);
     procedure CollectUnitPaths(const AIndex: Integer; AVisited: TList;
       APaths: TStrings);
@@ -137,6 +142,7 @@ type
     function UnitPathsForRequired(const ANames: TStrings): TStringList;
     function PackageCount: Integer;
     class function ExcludePattern: string;
+    class function ShouldExcludeLpkPath(const ALpkPath: string): Boolean;
   end;
 
   // ---------------------------------------------------------------------------
@@ -366,6 +372,13 @@ begin
 
   if Pos('<CustomConfigFile Value="True"', Block) > 0 then
     Result.CustomConfigFile := ExtractAttr(Block, 'ConfigFilePath');
+
+  if ExtractAttr(Block, 'SyntaxMode') <> '' then
+    Result.CompilerMode := LowerCase(ExtractAttr(Block, 'SyntaxMode'))
+  else if ExtractAttr(Block, 'CompilerMode') <> '' then
+    Result.CompilerMode := LowerCase(ExtractAttr(Block, 'CompilerMode'));
+  if Result.CompilerMode = '' then
+    Result.CompilerMode := 'delphi';
 end;
 
 class function TLazXml.ResolveUnitOutputDir(const AOptions: TLazCompilerOptions;
@@ -639,6 +652,30 @@ begin
     (FStubPas <> '') and FileExists(FStubPas);
 end;
 
+class function TLpkPackage.HasLclDependencyInFile(const ALpkPath: string): Boolean;
+var
+  Content, Block: string;
+  Filter: TRegExpr;
+begin
+  Result := False;
+  if not FileExists(ALpkPath) then
+    Exit;
+  Content := TLazXml.ReadFile(ALpkPath);
+  Block := TLazXml.ExtractBlock(Content, 'RequiredPkgs');
+  if Block = '' then
+    Exit;
+  Filter := TRegExpr.Create('<PackageName\s+Value="([^"]+)"\s*/>');
+  try
+    if Filter.Exec(Block) then
+      repeat
+        if SameText(Filter.Match[1], 'LCL') then
+          Exit(True);
+      until not Filter.ExecNext;
+  finally
+    Filter.Free;
+  end;
+end;
+
 // ---------------------------------------------------------------------------
 // TPackageGraph
 // ---------------------------------------------------------------------------
@@ -654,6 +691,18 @@ begin
   {$ELSE}
   Result := '(cocoa|gdi|_template)';
   {$IFEND}
+end;
+
+class function TPackageGraph.ShouldExcludeLpkPath(const ALpkPath: string): Boolean;
+var
+  Filter: TRegExpr;
+begin
+  Filter := TRegExpr.Create(ExcludePattern);
+  try
+    Result := Filter.Exec(ALpkPath);
+  finally
+    Filter.Free;
+  end;
 end;
 
 constructor TPackageGraph.Create(ARunner: TMakeRunner);
@@ -701,16 +750,10 @@ end;
 
 procedure TPackageGraph.RegisterLpk(const ALpkPath: string);
 var
-  Filter: TRegExpr;
   Pkg: TLpkPackage;
 begin
-  Filter := TRegExpr.Create(ExcludePattern);
-  try
-    if Filter.Exec(ALpkPath) then
-      Exit;
-  finally
-    Filter.Free;
-  end;
+  if ShouldExcludeLpkPath(ALpkPath) then
+    Exit;
 
   Pkg := TLpkPackage.CreateFromFile(ALpkPath, FRunner.TargetCpu, FRunner.TargetOs);
   if not Pkg.IsValid then
@@ -754,7 +797,8 @@ begin
   end;
 end;
 
-procedure TPackageGraph.CollectBuildOrder(const AIndex: Integer; AOrder: TList);
+procedure TPackageGraph.ForEachPackageDependency(const AIndex: Integer;
+  const AProc: TDepIndexProc);
 var
   Pkg: TLpkPackage;
   I, DepIdx: Integer;
@@ -762,8 +806,6 @@ var
 begin
   if (AIndex < 0) or (AIndex >= FItems.Count) then
     Exit;
-  if AOrder.IndexOf(Pointer(AIndex)) >= 0 then
-    Exit;
   Pkg := GetPackage(AIndex);
   for I := 0 to Pkg.RequiredNames.Count - 1 do
   begin
@@ -778,17 +820,37 @@ begin
       FRunner.IncError;
       Continue;
     end;
+    AProc(DepIdx);
+  end;
+end;
+
+procedure TPackageGraph.CollectBuildOrder(const AIndex: Integer; AOrder: TList);
+
+  procedure VisitDep(DepIdx: Integer);
+  begin
     CollectBuildOrder(DepIdx, AOrder);
   end;
+
+begin
+  if (AIndex < 0) or (AIndex >= FItems.Count) then
+    Exit;
+  if AOrder.IndexOf(Pointer(AIndex)) >= 0 then
+    Exit;
+  ForEachPackageDependency(AIndex, @VisitDep);
   AOrder.Add(Pointer(AIndex));
 end;
 
 procedure TPackageGraph.CollectUnitPaths(const AIndex: Integer; AVisited: TList;
   APaths: TStrings);
+
+  procedure VisitDep(DepIdx: Integer);
+  begin
+    CollectUnitPaths(DepIdx, AVisited, APaths);
+  end;
+
 var
   Pkg: TLpkPackage;
-  I, DepIdx: Integer;
-  DepName, Path: string;
+  Path: string;
 begin
   if (AIndex < 0) or (AIndex >= FItems.Count) then
     Exit;
@@ -796,23 +858,9 @@ begin
     Exit;
   AVisited.Add(Pointer(AIndex));
 
-  Pkg := GetPackage(AIndex);
-  for I := 0 to Pkg.RequiredNames.Count - 1 do
-  begin
-    DepName := Pkg.RequiredNames[I];
-    if IsBuiltinPackage(DepName) then
-      Continue;
-    DepIdx := FindIndexByName(DepName);
-    if DepIdx < 0 then
-    begin
-      FRunner.Log(CSI_Red, Format('package "%s" requires unknown "%s"',
-        [Pkg.PackageName, DepName]));
-      FRunner.IncError;
-      Continue;
-    end;
-    CollectUnitPaths(DepIdx, AVisited, APaths);
-  end;
+  ForEachPackageDependency(AIndex, @VisitDep);
 
+  Pkg := GetPackage(AIndex);
   Path := Pkg.UnitOutDir;
   if (Path <> '') and (APaths.IndexOf(Path) < 0) then
     APaths.Add(Path);
@@ -1174,18 +1222,17 @@ end;
 
 procedure TMakeRunner.RegisterPackageLazbuild(const APath: string);
 var
-  Filter: TRegExpr;
   CommandOutput: AnsiString;
 begin
-  Filter := TRegExpr.Create(TPackageGraph.ExcludePattern);
-  try
-    if Filter.Exec(APath) then
-      Exit;
-    if RunCommand('lazbuild', ['--add-package-link', APath], CommandOutput) then
-      Log(CSI_Yellow, 'added ' + APath);
-  finally
-    Filter.Free;
+  if TPackageGraph.ShouldExcludeLpkPath(APath) then
+    Exit;
+  if TLpkPackage.HasLclDependencyInFile(APath) then
+  begin
+    Log(CSI_Yellow, 'skip LCL-dependent package ' + APath);
+    Exit;
   end;
+  if RunCommand('lazbuild', ['--add-package-link', APath], CommandOutput) then
+    Log(CSI_Yellow, 'added ' + APath);
 end;
 
 procedure TMakeRunner.RegisterAllPackagesLazbuild(const ASearchDir: string);

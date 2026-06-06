@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CI_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=shared/common.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/shared/common.sh"
+ci_init_paths
 
-export DEBIAN_FRONTEND=noninteractive
-apt-get update
-apt-get install -y curl ca-certificates git build-essential openssl
-OPENSSL_USE_SUDO=0 bash "$CI_ROOT/openssl-linux.sh" /usr/lib/arm-linux-gnueabihf
+export OPENSSL_ARCH_DIR=/usr/lib/arm-linux-gnueabihf
+ci_debian_container_bootstrap

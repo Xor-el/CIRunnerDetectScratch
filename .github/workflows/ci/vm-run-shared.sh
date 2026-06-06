@@ -3,8 +3,8 @@ set -euo pipefail
 
 : "${FPC_TARGET:?FPC_TARGET is required}"
 
-# shellcheck source=lib/common.sh
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
+# shellcheck source=shared/common.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/shared/common.sh"
 ci_init_paths
 
 if [ -n "${LD_LIBRARY_PATH_EXTRA:-}" ]; then

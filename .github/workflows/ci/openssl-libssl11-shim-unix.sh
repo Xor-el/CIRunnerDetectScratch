@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FPC 3.2.2 hardcodes libssl.so.1.1; symlink OpenSSL 3.x libraries on Linux.
+# FPC 3.2.2 hardcodes libssl.so.1.1; symlink OpenSSL 3.x ELF libraries on Linux/BSD.
 set -euo pipefail
 
 ARCH_DIR="${1:-}"
@@ -17,7 +17,7 @@ if [ -z "$ARCH_DIR" ] || [ ! -d "$ARCH_DIR" ]; then
 fi
 
 if [ ! -f "$ARCH_DIR/libssl.so.3" ]; then
-  echo "openssl-linux: libssl.so.3 not found under $ARCH_DIR" >&2
+  echo "openssl-libssl11-shim-unix: libssl.so.3 not found under $ARCH_DIR" >&2
   exit 1
 fi
 

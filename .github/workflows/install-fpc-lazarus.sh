@@ -21,14 +21,20 @@
 #    MAKE_CMD            'make' on Linux/Windows/macOS, 'gmake' on BSD/Solaris
 #                        (auto-detected if unset)
 #    MAKE_BUILD_BACKEND  auto | lazbuild | fpc
-#                        fpc = FPC only (no lazbuild). Used on powerpc64-linux
-#                        under QEMU where compiling LCL is unreliable.
+#                        fpc    — install FPC only; skip Lazarus/lazbuild
+#                        lazbuild | auto — also clone Lazarus and build lazbuild
+#                        (auto here always installs Lazarus; make.pas auto probes
+#                        lazbuild on PATH at runtime and may still choose fpc)
 #
 #  Outputs (appended to $GITHUB_PATH if set):
 #    $INSTALL_PREFIX/bin and $LAZARUS_DIR are added to PATH
 # ─────────────────────────────────────────────────────────────────────
 
 set -xeuo pipefail
+
+INSTALL_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=ci/shared/common.sh
+source "$INSTALL_SCRIPT_DIR/ci/shared/common.sh"
 
 : "${FPC_VERSION:?FPC_VERSION is required (e.g. 3.2.2)}"
 : "${FPC_TARGET:?FPC_TARGET is required (e.g. x86_64-linux)}"
@@ -188,24 +194,17 @@ if [ "$(uname -s)" = "Linux" ]; then
   RTL_DIR="$INSTALL_PREFIX/lib/fpc/$FPC_VERSION/units/$FPC_TARGET/rtl"
   CPRT0="$RTL_DIR/cprt0.o"
 
-  write_csu_stubs_c() {
-    cat > "$1" <<'EOF'
-/* glibc 2.34+ removed __libc_csu_init / __libc_csu_fini. FPC 3.2.2's
-   RTL still references them. Provide empty stubs so the linker
-   is satisfied. */
-void __libc_csu_init(int argc, char **argv, char **envp) { (void)argc; (void)argv; (void)envp; }
-void __libc_csu_fini(void) {}
-EOF
-  }
-
+  CSU_STUBS_SRC="$INSTALL_SCRIPT_DIR/ci/shared/csu-stubs.c"
   FPC_CFG_MARKER="# glibc 2.34+ csu stubs (install-fpc-lazarus.sh)"
   append_fpc_cfg() {
+    local marker="$1"
+    shift
     local cfg
     for cfg in /etc/fpc.cfg "${HOME}/.fpc.cfg"; do
-      if [ -f "$cfg" ] && ! grep -qF "$FPC_CFG_MARKER" "$cfg" 2>/dev/null; then
+      if [ -f "$cfg" ] && ! grep -qF "$marker" "$cfg" 2>/dev/null; then
         {
           echo ""
-          echo "$FPC_CFG_MARKER"
+          echo "$marker"
           printf '%s\n' "$@"
         } >> "$cfg"
         echo "Updated $cfg"
@@ -220,27 +219,18 @@ EOF
       exit 1
     fi
     cp "$CSU_STUBS_PREBUILT" "$STUB_INSTALL"
-    append_fpc_cfg "-k$STUB_INSTALL"
+    append_fpc_cfg "$FPC_CFG_MARKER" "-k$STUB_INSTALL"
 
     if command -v gcc >/dev/null 2>&1; then
       CRT_DIR="$(dirname "$(gcc -print-file-name=crti.o)")"
       if [ -f "$CRT_DIR/crti.o" ]; then
         CRT_MARKER="# powerpc64-linux crt paths (install-fpc-lazarus.sh)"
-        for cfg in /etc/fpc.cfg "${HOME}/.fpc.cfg"; do
-          if [ -f "$cfg" ] && ! grep -qF "$CRT_MARKER" "$cfg" 2>/dev/null; then
-            {
-              echo ""
-              echo "$CRT_MARKER"
-              echo "-Fl$CRT_DIR"
-              echo "-k-L$CRT_DIR"
-            } >> "$cfg"
-            echo "Updated $cfg with crt search path $CRT_DIR"
-          fi
-        done
+        append_fpc_cfg "$CRT_MARKER" "-Fl$CRT_DIR" "-k-L$CRT_DIR"
+        echo "Updated fpc.cfg with crt search path $CRT_DIR"
       fi
     fi
   else
-    write_csu_stubs_c "$STUB_C"
+    cp "$CSU_STUBS_SRC" "$STUB_C"
     cc -c -fPIC -o "$WORK_DIR/csu_stubs.o" "$STUB_C"
     if [ -f "$CPRT0" ]; then
       ld -r -o "$CPRT0.new" "$CPRT0" "$WORK_DIR/csu_stubs.o"
@@ -272,107 +262,25 @@ fi
 # not MSYS/Git Bash paths (/c/foo/bin). cygpath converts both ways.
 # Both bin/<target> and bin/ go on PATH so subsequent steps find both
 # fpc.exe (the compiler) and instantfpc.exe (the utility).
-if [ -n "${GITHUB_PATH:-}" ]; then
-  if [ "$IS_WINDOWS" = "1" ]; then
-    cygpath -w "$FPC_BIN_DIR"  >> "$GITHUB_PATH"
-    cygpath -w "$FPC_UTIL_DIR" >> "$GITHUB_PATH"
-  else
-    echo "$FPC_BIN_DIR" >> "$GITHUB_PATH"
-  fi
+ci_github_path_append "$FPC_BIN_DIR"
+if [ -n "$FPC_UTIL_DIR" ]; then
+  ci_github_path_append "$FPC_UTIL_DIR"
 fi
 
 fpc -iV
 
-# ── Build Lazarus from source ────────────────────────────────────────
+# ── Build Lazarus from source (lazbuild | auto only) ─────────────────
 #
-# We always build lazbuild from source rather than using a packaged
-# Lazarus. Reasons:
-#   - Cross-platform consistency: same code path on all 10 targets.
-#   - The packaged Lazarus on Linux/Windows pulls in the full IDE
-#     (GTK / Qt / native widgets), which we don't need.
-#   - lazbuild builds in ~1–2 minutes; cheap relative to the FPC fetch.
-#
-# MAKE_BUILD_BACKEND=fpc: FPC-only install (powerpc64 BE under QEMU).
+# When INSTALL_LAZARUS=1, clone Lazarus and build lazbuild (~1–2 min).
+# Packaged Lazarus on Linux/Windows pulls in the full IDE; we only need
+# lazbuild for CI package/project builds.
 
 if [ "$INSTALL_LAZARUS" = "0" ]; then
   echo "MAKE_BUILD_BACKEND=fpc — FPC install complete (lazbuild skipped)."
   exit 0
 fi
 
-git clone --depth 1 --branch "$LAZARUS_BRANCH" "$LAZARUS_REPO" "$LAZARUS_DIR"
-
-# DragonFlyBSD: Lazarus is missing include/dragonfly/lazconf.inc.
-# DragonFlyBSD is a FreeBSD derivative, so the FreeBSD include works
-# as-is. Patch it in before building.
-if [ "$(uname -s)" = "DragonFly" ]; then
-  DF_INC="$LAZARUS_DIR/ide/packages/ideconfig/include/dragonfly"
-  if [ ! -f "$DF_INC/lazconf.inc" ]; then
-    mkdir -p "$DF_INC"
-    cp "$LAZARUS_DIR/ide/packages/ideconfig/include/freebsd/lazconf.inc" \
-       "$DF_INC/lazconf.inc"
-  fi
-fi
-
-# On Windows, gmake.exe is a native PE binary that may not understand
-# Git Bash's /c/Users/... path style. Pass a Windows-format path.
-if [ "$IS_WINDOWS" = "1" ]; then
-  $MAKE_CMD -C "$(cygpath -w "$LAZARUS_DIR")" lazbuild
-else
-  $MAKE_CMD -C "$LAZARUS_DIR" lazbuild
-fi
-
-# ── Write Lazarus environmentoptions.xml ─────────────────────────────
-# lazbuild reads this on startup to locate the Lazarus source tree
-# and the FPC compiler. Without it, lazbuild emits:
-#   Error: (lazbuild) Invalid Lazarus directory "": directory lcl not found
-#
-# The location lazbuild looks at is platform-specific:
-#   Unix:    $HOME/.lazarus/                                      (dotted)
-#   Windows: %LOCALAPPDATA%\lazarus\           — NOT %APPDATA%, NOT dotted
-#
-# The Windows path comes from Lazarus's lazbaseconf.inc:
-#   PrimaryConfigPath := ExtractFilePath(ChompPathDelim(
-#                          GetAppConfigDirUTF8(False))) + 'lazarus';
-# where GetAppConfigDir(False) on Windows resolves via
-# CSIDL_LOCAL_APPDATA to %LOCALAPPDATA%\<appname>\, so the parent +
-# 'lazarus' is %LOCALAPPDATA%\lazarus\ (no leading dot).
-#
-# On Windows, lazbuild is a native PE binary and expects Windows-
-# style paths in the XML values, so we cygpath them to backslash form.
-if [ "$IS_WINDOWS" = "1" ]; then
-  # On Windows runners $LOCALAPPDATA is set; fall back to the
-  # well-known location if it isn't.
-  WIN_LOCALAPPDATA="${LOCALAPPDATA:-$USERPROFILE/AppData/Local}"
-  LAZ_CFG_DIR="$(cygpath -u "$WIN_LOCALAPPDATA")/lazarus"
-  LAZ_DIR_NATIVE="$(cygpath -w "$LAZARUS_DIR")"
-  FPC_EXE_NATIVE="$(cygpath -w "$FPC_EXE")"
-else
-  LAZ_CFG_DIR="${HOME}/.lazarus"
-  LAZ_DIR_NATIVE="$LAZARUS_DIR"
-  FPC_EXE_NATIVE="$FPC_EXE"
-fi
-
-mkdir -p "$LAZ_CFG_DIR"
-
-cat > "$LAZ_CFG_DIR/environmentoptions.xml" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<CONFIG>
-  <EnvironmentOptions>
-    <LazarusDirectory Value="$LAZ_DIR_NATIVE"/>
-    <CompilerFilename Value="$FPC_EXE_NATIVE"/>
-  </EnvironmentOptions>
-</CONFIG>
-EOF
-
-# Put lazbuild on PATH for subsequent steps.
-export PATH="$LAZARUS_DIR:$PATH"
-if [ -n "${GITHUB_PATH:-}" ]; then
-  if [ "$IS_WINDOWS" = "1" ]; then
-    cygpath -w "$LAZARUS_DIR" >> "$GITHUB_PATH"
-  else
-    echo "$LAZARUS_DIR" >> "$GITHUB_PATH"
-  fi
-fi
-
-lazbuild --version
+export FPC_EXE
+# shellcheck source=ci/shared/lazarus-bootstrap.sh
+source "$INSTALL_SCRIPT_DIR/ci/shared/lazarus-bootstrap.sh"
 echo "FPC + Lazarus installation complete."

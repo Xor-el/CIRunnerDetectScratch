@@ -1,7 +1,9 @@
 #!/bin/sh
 set -eu
 
-CI_ROOT="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=shared/common.sh
+. "$(cd "$(dirname "$0")" && pwd)/shared/common.sh"
+ci_init_paths
 
 pkg install -y bash curl git gmake openssl
 
@@ -12,4 +14,4 @@ for h in github.com packages.lazarus-ide.org downloads.freepascal.org; do
   fi
 done
 
-OPENSSL_USE_SUDO=0 bash "$CI_ROOT/openssl-linux.sh" /usr/local/lib
+OPENSSL_USE_SUDO=0 bash "$CI_ROOT/openssl-libssl11-shim-unix.sh" /usr/local/lib

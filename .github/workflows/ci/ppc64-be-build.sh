@@ -6,6 +6,9 @@ set -euo pipefail
 : "${FPC_TARGET:?FPC_TARGET is required}"
 : "${MAKE_BUILD_BACKEND:?MAKE_BUILD_BACKEND is required}"
 
+CI_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CI_SHARED="$CI_ROOT/shared"
+
 # Cross-compile glibc csu stubs on the x86 host. gcc inside QEMU ppc64
 # user-mode often SIGSEGVs; install-fpc-lazarus.sh expects CSU_STUBS_PREBUILT.
 STUB_C="$(mktemp --suffix=.c)"
@@ -13,13 +16,7 @@ STUB_OBJ="$(mktemp --suffix=.o)"
 CSU_STUBS_IN_CONTAINER=/csu_stubs_prebuilt.o
 trap 'rm -f "$STUB_C" "$STUB_OBJ"' EXIT
 
-cat > "$STUB_C" <<'EOF'
-/* glibc 2.34+ removed __libc_csu_init / __libc_csu_fini. FPC 3.2.2's
-   RTL still references them. Provide empty stubs so the linker
-   is satisfied. */
-void __libc_csu_init(int argc, char **argv, char **envp) { (void)argc; (void)argv; (void)envp; }
-void __libc_csu_fini(void) {}
-EOF
+cp "$CI_SHARED/csu-stubs.c" "$STUB_C"
 
 sudo apt-get update -qq
 sudo apt-get install -y -qq gcc-powerpc64-linux-gnu

@@ -252,8 +252,10 @@ jobs:
   #  Tier 2 — Linux PowerPC64 BE via QEMU (Docker)
   #
   #  uraimo/run-on-arch-action supports ppc64le but not powerpc64 BE.
-  #  We use docker/setup-qemu-action + debian:bookworm linux/ppc64
-  #  so FPC runs natively inside the emulated environment.
+  #  Official debian:* images do not publish a linux/ppc64 manifest
+  #  (BE ppc was dropped after Debian 8/9). We use a Debian Ports image
+  #  built for ppc64 and docker/setup-qemu-action so FPC runs natively
+  #  inside the emulated environment.
   # ─────────────────────────────────────────────────────────────────────
 
   linux-powerpc64-be:
@@ -283,14 +285,15 @@ jobs:
             -e FPC_VERSION \
             -e LAZARUS_BRANCH \
             -e LAZARUS_REPO \
-            debian:bookworm \
+            -e DEBIAN_FRONTEND=noninteractive \
+            urbanogilson/debian-debootstrap-ports:ppc64-forky-sid \
             bash -c '
               set -xeuo pipefail
               apt-get update
               apt-get install -y curl ca-certificates git build-essential \
                                  gcc binutils openssl
 
-              # FPC 3.2.2 hardcodes libssl.1.1; symlink to OpenSSL 3.x on bookworm.
+              # FPC 3.2.2 hardcodes libssl.1.1; symlink to OpenSSL 3.x.
               for ARCH_DIR in /usr/lib/powerpc64-linux-gnu /usr/lib; do
                 if [ -f "$ARCH_DIR/libssl.so.3" ]; then
                   ln -sf "$ARCH_DIR/libssl.so.3"    "$ARCH_DIR/libssl.so.1.1"

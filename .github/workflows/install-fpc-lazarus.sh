@@ -170,19 +170,19 @@ fi
 # pre-built tarball we provide empty stub symbols ourselves.
 #
 # Affected: every Linux target (x86_64, aarch64, arm/armhf, powerpc64).
-# Merging stubs into cprt0.o alone is not always enough — on
-# powerpc64-linux, si_c.o holds function-pointer slots for these
-# symbols and the linker must see csu_stubs.o on every link. We therefore:
-#   1. install a permanent csu_stubs.o under $INSTALL_PREFIX/lib/fpc/…
-#   2. merge it into rtl/cprt0.o (relocatable link via ld -r)
-#   3. append -k<stub> to fpc.cfg so all compiles link the stubs
+# Merging stubs into rtl/cprt0.o alone worked on most arches but not on
+# powerpc64-linux, where si_c.o also references these symbols. Linking a
+# shared csu_stubs.o on every build (via -k in fpc.cfg) covers cprt0.o,
+# si_c.o, and the rest. Do not also merge into cprt0.o — that defines
+# the symbols twice and breaks linking (multiple definition errors).
+#
+# We install csu_stubs.o under $INSTALL_PREFIX/lib/fpc/… and append
+# -k<stub> to fpc.cfg.
 #
 # This hack can be removed once we move to FPC 3.2.4+.
 #
 # See https://gitlab.com/freepascal.org/fpc/source/-/issues/39295
 if [ "$(uname -s)" = "Linux" ]; then
-  RTL_DIR="$INSTALL_PREFIX/lib/fpc/$FPC_VERSION/units/$FPC_TARGET/rtl"
-  CPRT0="$RTL_DIR/cprt0.o"
   STUB_INSTALL="$INSTALL_PREFIX/lib/fpc/$FPC_VERSION/csu_stubs.o"
   STUB_C="$WORK_DIR/csu_stubs.c"
   cat > "$STUB_C" <<'EOF'
@@ -194,15 +194,7 @@ void __libc_csu_fini(void) {}
 EOF
   cc -c -fPIC -o "$STUB_INSTALL" "$STUB_C"
 
-  if [ -f "$CPRT0" ]; then
-    # Merge stubs into cprt0.o: cprt0.o references __libc_csu_*; the stub
-    # provides them; the merged object resolves both within itself.
-    ld -r -o "$CPRT0.new" "$CPRT0" "$STUB_INSTALL"
-    mv "$CPRT0.new" "$CPRT0"
-    echo "Patched $CPRT0 with glibc 2.34+ stubs."
-  fi
-
-  # si_c.o (and similar RTL units) need the stub object at link time.
+  # Link csu_stubs.o on every compile (cprt0.o, si_c.o, …).
   FPC_CFG_MARKER="# glibc 2.34+ csu stubs (install-fpc-lazarus.sh)"
   append_fpc_cfg() {
     local cfg

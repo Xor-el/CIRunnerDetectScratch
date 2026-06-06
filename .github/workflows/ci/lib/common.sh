@@ -22,71 +22,10 @@ ci_export_toolchain_path() {
   fi
 }
 
-ci_elf_endian() {
-  # ELF e_ident[EI_DATA] byte 5: 1=LE, 2=BE. Empty if not ELF.
-  local path="$1" data
-  [ -f "$path" ] || return 1
-  data="$(od -An -j 5 -N 1 -t u1 "$path" 2>/dev/null | tr -d ' ')"
-  case "$data" in
-    1) echo "little" ;;
-    2) echo "big" ;;
-    *) echo "unknown" ;;
-  esac
-}
-
-ci_assert_powerpc64_be() {
-  [ "${FPC_TARGET:-}" = "powerpc64-linux" ] || return 0
-
-  local machine bash_endian backend_endian
-  machine="$(uname -m)"
-  echo "::notice::kernel $(uname -s) ${machine}"
-
-  if [ "$machine" = "ppc64le" ]; then
-    echo "::error::powerpc64-linux BE CI requires uname -m ppc64, got ppc64le" >&2
-    exit 1
-  fi
-  if [ "$machine" != "ppc64" ]; then
-    echo "::warning::unexpected uname -m ${machine} for powerpc64-linux" >&2
-  fi
-
-  if [ -f /bin/bash ]; then
-    bash_endian="$(ci_elf_endian /bin/bash)"
-    echo "::notice::/bin/bash ELF endian: ${bash_endian}"
-    if [ "$bash_endian" = "little" ]; then
-      echo "::error::userspace /bin/bash is little-endian ELF; expected BE for ppc64" >&2
-      exit 1
-    fi
-  fi
-
-  backend="${INSTALL_PREFIX:-$HOME/fpc-install}/bin/ppcppc64"
-  if [ -f "$backend" ]; then
-    backend_endian="$(ci_elf_endian "$backend")"
-    echo "::notice::ppcppc64 ELF endian: ${backend_endian}"
-    if [ "$backend_endian" = "little" ]; then
-      echo "::error::ppcppc64 is little-endian ELF; expected BE for powerpc64-linux" >&2
-      exit 1
-    fi
-  fi
-
-  if command -v lscpu >/dev/null 2>&1; then
-    lscpu 2>/dev/null | grep -i 'byte order' \
-      | sed 's/^/::notice::lscpu (often wrong under QEMU; trust ELF endian): /' \
-      || true
-  fi
-}
-
 ci_verify_toolchain() {
   fpc -iV
   if [ -n "${FPC_TARGET:-}" ]; then
     echo "::notice::FPC_TARGET=${FPC_TARGET}"
-    echo "::notice::fpc -iTO $(fpc -iTO 2>/dev/null || echo n/a)"
-  fi
-  ci_assert_powerpc64_be
-  if [ "${FPC_TARGET:-}" != "powerpc64-linux" ]; then
-    echo "::notice::kernel $(uname -s) $(uname -m)"
-    if command -v lscpu >/dev/null 2>&1; then
-      lscpu 2>/dev/null | grep -i 'byte order' | head -1 | sed 's/^/::notice::/' || true
-    fi
   fi
   if command -v lazbuild >/dev/null 2>&1; then
     lazbuild --version

@@ -22,15 +22,88 @@ ci_export_toolchain_path() {
   fi
 }
 
+ci_runtime_byteorder() {
+  # Reliable process endian probe (lscpu often lies under QEMU user-mode).
+  local tmp
+  tmp="$(mktemp)"
+  cat > "${tmp}.c" <<'EOF'
+#include <stdio.h>
+int main(void) {
+  int x = 1;
+  return *(const char *)&x;
+}
+EOF
+  if cc -o "${tmp}" "${tmp}.c" 2>/dev/null; then
+    if "${tmp}"; then
+      echo "little"
+    else
+      echo "big"
+    fi
+  else
+    echo "unknown"
+  fi
+  rm -f "${tmp}" "${tmp}.c"
+}
+
+ci_assert_powerpc64_be() {
+  [ "${FPC_TARGET:-}" = "powerpc64-linux" ] || return 0
+
+  local machine byteorder backend elfinfo
+  machine="$(uname -m)"
+  echo "::notice::kernel $(uname -s) ${machine}"
+
+  if [ "$machine" = "ppc64le" ]; then
+    echo "::error::powerpc64-linux BE CI requires uname -m ppc64, got ppc64le" >&2
+    exit 1
+  fi
+  if [ "$machine" != "ppc64" ]; then
+    echo "::warning::unexpected uname -m ${machine} for powerpc64-linux" >&2
+  fi
+
+  byteorder="$(ci_runtime_byteorder)"
+  echo "::notice::runtime byteorder: ${byteorder}"
+  if [ "$byteorder" = "little" ]; then
+    echo "::error::powerpc64-linux BE CI but runtime byteorder is little" >&2
+    exit 1
+  fi
+
+  if [ -f /bin/bash ]; then
+    echo "::notice::/bin/bash ELF: $(file -b /bin/bash | cut -d, -f1-2)"
+    if file -b /bin/bash | grep -qi 'LSB'; then
+      echo "::error::userspace /bin/bash is little-endian ELF; expected MSB for BE ppc64" >&2
+      exit 1
+    fi
+  fi
+
+  backend="${INSTALL_PREFIX:-$HOME/fpc-install}/bin/ppcppc64"
+  if [ -f "$backend" ]; then
+    elfinfo="$(file -b "$backend")"
+    echo "::notice::ppcppc64 ELF: ${elfinfo}"
+    if echo "$elfinfo" | grep -qi 'LSB'; then
+      echo "::error::ppcppc64 is little-endian ELF; expected MSB for powerpc64-linux" >&2
+      exit 1
+    fi
+  fi
+
+  if command -v lscpu >/dev/null 2>&1; then
+    lscpu 2>/dev/null | grep -i 'byte order' \
+      | sed 's/^/::notice::lscpu (often wrong under QEMU; trust runtime byteorder): /' \
+      || true
+  fi
+}
+
 ci_verify_toolchain() {
   fpc -iV
-  echo "::notice::kernel $(uname -s) $(uname -m)"
-  if command -v lscpu >/dev/null 2>&1; then
-    lscpu 2>/dev/null | grep -i 'byte order' | head -1 | sed 's/^/::notice::/' || true
-  fi
   if [ -n "${FPC_TARGET:-}" ]; then
     echo "::notice::FPC_TARGET=${FPC_TARGET}"
     echo "::notice::fpc -iTO $(fpc -iTO 2>/dev/null || echo n/a)"
+  fi
+  ci_assert_powerpc64_be
+  if [ "${FPC_TARGET:-}" != "powerpc64-linux" ]; then
+    echo "::notice::kernel $(uname -s) $(uname -m)"
+    if command -v lscpu >/dev/null 2>&1; then
+      lscpu 2>/dev/null | grep -i 'byte order' | head -1 | sed 's/^/::notice::/' || true
+    fi
   fi
   if command -v lazbuild >/dev/null 2>&1; then
     lazbuild --version

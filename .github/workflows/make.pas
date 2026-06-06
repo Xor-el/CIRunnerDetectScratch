@@ -125,6 +125,8 @@ type
     function FindIndexByName(const AName: string): Integer;
     function IsBuiltinPackage(const AName: string): Boolean;
     procedure CollectBuildOrder(const AIndex: Integer; AOrder: TList);
+    procedure CollectUnitPaths(const AIndex: Integer; AVisited: TList;
+      APaths: TStrings);
   public
     constructor Create(ARunner: TMakeRunner);
     destructor Destroy; override;
@@ -781,6 +783,41 @@ begin
   AOrder.Add(Pointer(AIndex));
 end;
 
+procedure TPackageGraph.CollectUnitPaths(const AIndex: Integer; AVisited: TList;
+  APaths: TStrings);
+var
+  Pkg: TLpkPackage;
+  I, DepIdx: Integer;
+  DepName, Path: string;
+begin
+  if (AIndex < 0) or (AIndex >= FItems.Count) then
+    Exit;
+  if AVisited.IndexOf(Pointer(AIndex)) >= 0 then
+    Exit;
+  AVisited.Add(Pointer(AIndex));
+
+  Pkg := GetPackage(AIndex);
+  for I := 0 to Pkg.RequiredNames.Count - 1 do
+  begin
+    DepName := Pkg.RequiredNames[I];
+    if IsBuiltinPackage(DepName) then
+      Continue;
+    DepIdx := FindIndexByName(DepName);
+    if DepIdx < 0 then
+    begin
+      FRunner.Log(CSI_Red, Format('package "%s" requires unknown "%s"',
+        [Pkg.PackageName, DepName]));
+      FRunner.IncError;
+      Continue;
+    end;
+    CollectUnitPaths(DepIdx, AVisited, APaths);
+  end;
+
+  Path := Pkg.UnitOutDir;
+  if (Path <> '') and (APaths.IndexOf(Path) < 0) then
+    APaths.Add(Path);
+end;
+
 function TPackageGraph.BuildAll: Boolean;
 var
   Order: TList;
@@ -862,17 +899,31 @@ end;
 
 function TPackageGraph.UnitPathsForRequired(const ANames: TStrings): TStringList;
 var
-  I: Integer;
-  Path: string;
+  I, Idx: Integer;
+  Visited: TList;
 begin
   Result := TStringList.Create;
   if not Assigned(ANames) then
     Exit;
-  for I := 0 to ANames.Count - 1 do
-  begin
-    Path := UnitPathFor(ANames[I]);
-    if (Path <> '') and (Result.IndexOf(Path) < 0) then
-      Result.Add(Path);
+
+  Visited := TList.Create;
+  try
+    for I := 0 to ANames.Count - 1 do
+    begin
+      if IsBuiltinPackage(ANames[I]) then
+        Continue;
+      Idx := FindIndexByName(ANames[I]);
+      if Idx < 0 then
+      begin
+        FRunner.Log(CSI_Red, Format('project requires unknown package "%s"',
+          [ANames[I]]));
+        FRunner.IncError;
+        Continue;
+      end;
+      CollectUnitPaths(Idx, Visited, Result);
+    end;
+  finally
+    Visited.Free;
   end;
 end;
 

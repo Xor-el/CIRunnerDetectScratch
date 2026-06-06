@@ -24,6 +24,14 @@ ci_export_toolchain_path() {
 
 ci_verify_toolchain() {
   fpc -iV
+  echo "::notice::kernel $(uname -s) $(uname -m)"
+  if command -v lscpu >/dev/null 2>&1; then
+    lscpu 2>/dev/null | grep -i 'byte order' | head -1 | sed 's/^/::notice::/' || true
+  fi
+  if [ -n "${FPC_TARGET:-}" ]; then
+    echo "::notice::FPC_TARGET=${FPC_TARGET}"
+    echo "::notice::fpc -iTO $(fpc -iTO 2>/dev/null || echo n/a)"
+  fi
   if command -v lazbuild >/dev/null 2>&1; then
     lazbuild --version
   fi

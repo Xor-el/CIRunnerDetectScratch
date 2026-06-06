@@ -8,7 +8,7 @@ set -euo pipefail
 
 # Cross-compile glibc csu stubs on the x86 host. gcc inside QEMU ppc64
 # user-mode often SIGSEGVs; install-fpc-lazarus.sh expects CSU_STUBS_PREBUILT.
-STUB_C="$(mktemp)"
+STUB_C="$(mktemp --suffix=.c)"
 STUB_OBJ="$(mktemp --suffix=.o)"
 CSU_STUBS_IN_CONTAINER=/csu_stubs_prebuilt.o
 trap 'rm -f "$STUB_C" "$STUB_OBJ"' EXIT

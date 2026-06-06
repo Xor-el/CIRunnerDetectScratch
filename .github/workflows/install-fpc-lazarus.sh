@@ -230,7 +230,13 @@ fi
 
 fpc -iV
 fpc -iSO
-fpc -iSP
+# fpc -iSP runs the backend compiler; on powerpc64-linux under QEMU user-mode
+# that probe can SIGSEGV even when ppcppc64 works for real builds.
+if [ "$FPC_TARGET" = "powerpc64-linux" ]; then
+  echo "::notice::Skipping fpc -iSP on powerpc64-linux (QEMU backend probe)"
+else
+  fpc -iSP
+fi
 
 # ── Build Lazarus from source ────────────────────────────────────────
 #

@@ -1,7 +1,7 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
-CI_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CI_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 pkg install -y bash curl git gmake openssl
 

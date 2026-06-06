@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# shellcheck source=lib/common.sh
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
-ci_init_paths
+CI_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update

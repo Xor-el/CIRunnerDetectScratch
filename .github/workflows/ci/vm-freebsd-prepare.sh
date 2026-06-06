@@ -1,6 +1,7 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # FreeBSD VM prepare — see FREEBSD_INSTALL_MODE (interim|preferred).
-set -euo pipefail
+# Invoked with /bin/sh (bash is not installed until this script runs).
+set -eu
 
 : "${FREEBSD_INSTALL_MODE:?FREEBSD_INSTALL_MODE is required (interim|preferred)}"
 
@@ -22,7 +23,7 @@ pkg bootstrap -f
 pkg upgrade -Fqy || true
 pkg update -f
 pkg upgrade -y
-pkg install -y fpc git wget gmake
+pkg install -y bash fpc git wget gmake
 
 LAZARUS_DIR="$HOME/lazarus-src"
 git clone --depth 1 --branch "$LAZARUS_BRANCH" "$LAZARUS_REPO" "$LAZARUS_DIR"

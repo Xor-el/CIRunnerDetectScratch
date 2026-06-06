@@ -7,10 +7,12 @@ set -euo pipefail
 : "${MAKE_BUILD_BACKEND:?MAKE_BUILD_BACKEND is required}"
 
 docker run --rm --platform linux/ppc64 \
+  --security-opt seccomp=unconfined \
   -v "${GITHUB_WORKSPACE}:/work" -w /work \
   -e FPC_VERSION \
   -e FPC_TARGET \
   -e MAKE_BUILD_BACKEND \
   -e DEBIAN_FRONTEND=noninteractive \
+  -e QEMU_CPU=power8 \
   urbanogilson/debian-debootstrap-ports:ppc64-forky-sid \
   bash .github/workflows/ci/ppc64-be-inner.sh

@@ -16,10 +16,6 @@
   {$MESSAGE ERROR 'This Library requires FreePascal 3.2.2 or higher.'}
 {$IFEND}
 
-{$IFDEF ENDIAN_BIG}
-  {$MESSAGE FATAL 'This Library does not support "Big Endian" processors yet.'}
-{$ENDIF}
-
 {============================ FPC Version Features ============================}
 
 {$IF FPC_FULLVERSION >= 30301}
@@ -56,6 +52,10 @@
 {$IFDEF CPUAARCH64}
   {$DEFINE HASHLIB_AARCH64}
   {$DEFINE HASHLIB_AARCH64_ASM}
+{$ENDIF}
+
+{$IFDEF CPUPOWERPC64}
+  {$DEFINE HASHLIB_POWERPC64}
 {$ENDIF}
 
 {================================= Target OS ==================================}

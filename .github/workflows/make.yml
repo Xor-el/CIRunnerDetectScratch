@@ -16,7 +16,8 @@ on:
         description: >-
           Comma-separated list of targets to run (leave empty for default).
           Valid IDs: linux-x64, linux-arm64, windows-x64, macos-arm64,
-          macos-x64, linux-arm32, freebsd, netbsd, dragonflybsd, solaris
+          macos-x64, linux-arm32, linux-powerpc64-be, freebsd, netbsd,
+          dragonflybsd, solaris
         default: ""
         type: string
 
@@ -62,8 +63,8 @@ jobs:
   #  overrides DEFAULT when non-empty.
   #
   #  Valid IDs: linux-x64, linux-arm64, windows-x64, macos-arm64,
-  #             macos-x64, linux-arm32, freebsd, netbsd,
-  #             dragonflybsd, solaris
+  #             macos-x64, linux-arm32, linux-powerpc64-be, freebsd,
+  #             netbsd, dragonflybsd, solaris
   # ─────────────────────────────────────────────────────────────────────
 
   setup:
@@ -79,7 +80,7 @@ jobs:
           INPUT_TARGETS: ${{ github.event.inputs.enabled_targets }}
         run: |
           set -euo pipefail
-          DEFAULT="linux-arm32,linux-x64,linux-arm64,windows-x64,macos-arm64,macos-x64,freebsd,solaris"
+          DEFAULT="linux-arm32,linux-powerpc64-be,linux-x64,linux-arm64,windows-x64,macos-arm64,macos-x64,freebsd,solaris"
           # workflow_dispatch with an empty textbox still sends an empty
           # string (the declared `default:` is suppressed in that case),
           # and push/PR/schedule runs have no inputs context at all, so
@@ -246,6 +247,66 @@ jobs:
             export PATH="$HOME/lazarus-src:$HOME/fpc-install/bin:$PATH"
             fpc -iV
             instantfpc .github/workflows/make.pas
+
+  # ─────────────────────────────────────────────────────────────────────
+  #  Tier 2 — Linux PowerPC64 BE via QEMU (Docker)
+  #
+  #  uraimo/run-on-arch-action supports ppc64le but not powerpc64 BE.
+  #  We use docker/setup-qemu-action + debian:bookworm linux/ppc64
+  #  so FPC runs natively inside the emulated environment.
+  # ─────────────────────────────────────────────────────────────────────
+
+  linux-powerpc64-be:
+    name: Linux PowerPC64 BE (QEMU)
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    needs: setup
+    if: contains(format(',{0},', needs.setup.outputs.enabled_targets), ',linux-powerpc64-be,')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Build (PowerPC64 BE via QEMU)
+        env:
+          FPC_VERSION: ${{ env.FPC_VERSION }}
+          LAZARUS_BRANCH: ${{ env.LAZARUS_BRANCH }}
+          LAZARUS_REPO: ${{ env.LAZARUS_REPO }}
+        run: |
+          set -xeuo pipefail
+          docker run --rm --platform linux/ppc64 \
+            -v "${{ github.workspace }}:/work" -w /work \
+            -e FPC_VERSION \
+            -e LAZARUS_BRANCH \
+            -e LAZARUS_REPO \
+            debian:bookworm \
+            bash -c '
+              set -xeuo pipefail
+              apt-get update
+              apt-get install -y curl ca-certificates git build-essential \
+                                 gcc binutils openssl
+
+              # FPC 3.2.2 hardcodes libssl.1.1; symlink to OpenSSL 3.x on bookworm.
+              for ARCH_DIR in /usr/lib/powerpc64-linux-gnu /usr/lib; do
+                if [ -f "$ARCH_DIR/libssl.so.3" ]; then
+                  ln -sf "$ARCH_DIR/libssl.so.3"    "$ARCH_DIR/libssl.so.1.1"
+                  ln -sf "$ARCH_DIR/libcrypto.so.3" "$ARCH_DIR/libcrypto.so.1.1"
+                  break
+                fi
+              done
+
+              export FPC_TARGET=powerpc64-linux
+              bash .github/workflows/install-fpc-lazarus.sh
+              export PATH="$HOME/lazarus-src:$HOME/fpc-install/bin:$PATH"
+              fpc -iV
+              fpc -iTO
+              uname -m
+              instantfpc .github/workflows/make.pas
+            '
 
   # ─────────────────────────────────────────────────────────────────────
   #  Tier 3 — BSD family via vmactions QEMU system VMs

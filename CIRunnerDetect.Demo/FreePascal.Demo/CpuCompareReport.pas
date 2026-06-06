@@ -190,6 +190,20 @@ begin
   end;
 end;
 
+function PpcLevelToStr(const L: TPpcSimdLevel): string;
+begin
+  case L of
+    TPpcSimdLevel.Scalar:
+      Result := 'scalar';
+    TPpcSimdLevel.AltiVec:
+      Result := 'altivec';
+    TPpcSimdLevel.VSX:
+      Result := 'vsx';
+  else
+    Result := 'unknown';
+  end;
+end;
+
 function BoolTxt(B: Boolean): string;
 begin
   if B then
@@ -379,6 +393,41 @@ begin
 end;
 {$ENDIF}
 
+{$IFDEF HASHLIB_POWERPC}
+procedure ReportPpc(const Lines: TStrings; const DotNetProbeOk: Boolean);
+var
+  Mis: TStringList;
+  HL: string;
+
+  procedure RowBool(const Title: string; const HB: Boolean);
+  begin
+    if not DotNetProbeOk then
+      PrintRow(Title, BoolTxt(HB), NetColUnavailable, '-')
+    else
+      PrintRow(Title, BoolTxt(HB), '(unsupported)', '-');
+  end;
+
+begin
+  Mis := TStringList.Create;
+  try
+    PrintHeader;
+    HL := PpcLevelToStr(TCpuFeatures.Ppc.GetActiveSimdLevel());
+    if not DotNetProbeOk then
+      PrintRow('Simd level', HL, NetColUnavailable, '-')
+    else
+      PrintRow('Simd level', HL, '(unsupported)', '-');
+
+    RowBool('AltiVec', TCpuFeatures.Ppc.HasAltiVec());
+    RowBool('VSX', TCpuFeatures.Ppc.HasVSX());
+    RowBool('PPC64', TCpuFeatures.Ppc.HasPPC64());
+
+    Summarize(Mis, DotNetProbeOk);
+  finally
+    Mis.Free;
+  end;
+end;
+{$ENDIF}
+
 procedure RunCpuCapabilityCompare;
 var
   ProbePath: string;
@@ -432,7 +481,11 @@ begin
 {$IFDEF HASHLIB_ARM}
     ReportArm(Lines, DotNetProbeOk);
 {$ELSE}
-    WriteLn('Neither HASHLIB_X86 nor HASHLIB_ARM is defined for this target.');
+{$IFDEF HASHLIB_POWERPC}
+    ReportPpc(Lines, DotNetProbeOk);
+{$ELSE}
+    WriteLn('No supported CPU architecture is defined for this target.');
+{$ENDIF}
 {$ENDIF}
 {$ENDIF}
   finally

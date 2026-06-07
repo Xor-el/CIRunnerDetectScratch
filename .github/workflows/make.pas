@@ -3,11 +3,12 @@ program Make;
 {$SCOPEDENUMS ON}
 
 uses
-  SysUtils, Classes, Contnrs, StrUtils, Process, RegExpr, Zipper, fphttpclient,
-  openssl, opensslsockets;
+  SysUtils, Classes, Generics.Collections, StrUtils, Process, RegExpr,
+  Zipper, fphttpclient, openssl, opensslsockets;
 
 type
   TMakeRunner = class;
+  TLpkPathProc = procedure(const ALpkPath: string) of object;
 
   // ---------------------------------------------------------------------------
   // Build backend
@@ -58,19 +59,36 @@ type
       AArgs: TStrings);
     class function ResolvePath(const AValue, AProjDir, AUnitOutDir, APkgOutDir,
       ATargetCpu, ATargetOs: string): string;
+    class function CollectFileSourceDirs(const AContent, APkgDir, ATargetCpu,
+      ATargetOs: string): TStringList;
+    class function ExtractPackageNames(const ABlock: string): TStringList;
+    class function ExtractPackageNamesFromContent(const AContent,
+      ABlockTag: string): TStringList;
+    class function ContentRequiresPackage(const AContent, APackageName,
+      ABlockTag: string): Boolean;
+    class function ExtractUnitNames(const AContent: string): TStringList;
+    class procedure AppendPackageBuildArgs(AArgs: TStrings;
+      const AStubFileName, AUnitOutDir: string);
+    class procedure AppendProjectBuildArgs(AArgs: TStrings;
+      const AMainSource, AUnitOutDir, ATargetBinary: string);
   private
     class function IsAbsolutePath(const S: string): Boolean;
     class function ExpandMacros(const S, AProjDir, AUnitOutDir, APkgOutDir,
       ATargetCpu, ATargetOs: string): string;
     class procedure AppendSearchPathArgs(const APaths, AProjDir, AUnitOutDir,
       APkgOutDir, ATargetCpu, ATargetOs, APrefix: string; AArgs: TStrings);
+    class function ArgsHasFuPath(const AArgs: TStrings; const APath: string): Boolean;
+    class procedure AppendFuIfMissing(const APath: string; AArgs: TStrings);
   end;
 
   TProjectFiles = class
   public
     class function FindAll(const ASearchDir, AMask: string): TStringList;
+    class procedure RemoveRecursive(const ADir: string);
   private
     class function MatchesMask(const AFileName, AMask: string): Boolean;
+    class function IsBackupDir(const ADirName: string): Boolean;
+    class function ShouldExcludePath(const AFilePath: string): Boolean;
     class procedure FindRecursive(const ADir, AMask: string; AList: TStrings);
   end;
 
@@ -91,9 +109,9 @@ type
       ATargetCpu, ATargetOs: string): TStringList;
     property RequiredPackageNames: TStringList read FRequiredPackageNames;
     property TargetBinary: string read FTargetBinary;
+    property UnitOutDir: string read FUnitOutDir;
+    property ProjDir: string read FProjDir;
   end;
-
-  TDepIndexProc = procedure(DepIdx: Integer);
 
   TLpkPackage = class
   private
@@ -105,32 +123,38 @@ type
     FOptions: TLazCompilerOptions;
     FRequiredNames: TStringList;
     FHasLclDependency: Boolean;
+    FSourceDirs: TStringList;
   public
     constructor CreateFromFile(const ALpkPath, ATargetCpu, ATargetOs: string);
     destructor Destroy; override;
     function IsValid: Boolean;
+    function ResolveUnitOutDir(const ATargetCpu, ATargetOs: string): string;
     property PackageName: string read FPackageName;
     property UnitOutDir: string read FUnitOutDir;
     property PkgDir: string read FPkgDir;
     property Options: TLazCompilerOptions read FOptions;
     property RequiredNames: TStringList read FRequiredNames;
+    property SourceDirs: TStringList read FSourceDirs;
     property StubPas: string read FStubPas;
     property HasLclDependency: Boolean read FHasLclDependency;
     class function HasLclDependencyInFile(const ALpkPath: string): Boolean;
   end;
 
+  TDepVisitKind = (BuildOrder, UnitPaths);
+
   TPackageGraph = class
   private
     FRunner: TMakeRunner;
-    FItems: TObjectList;
+    FItems: TObjectList<TLpkPackage>;
     FNameToIndex: TStringList;
     function GetPackage(Index: Integer): TLpkPackage;
     function FindIndexByName(const AName: string): Integer;
     function IsBuiltinPackage(const AName: string): Boolean;
-    procedure ForEachPackageDependency(const AIndex: Integer;
-      const AProc: TDepIndexProc);
-    procedure CollectBuildOrder(const AIndex: Integer; AOrder: TList);
-    procedure CollectUnitPaths(const AIndex: Integer; AVisited: TList;
+    function ResolveDepIndex(const APackageName, AContext: string): Integer;
+    procedure VisitPackageDeps(const AIndex: Integer; AVisited: TList<Integer>;
+      AKind: TDepVisitKind; AOrder: TList<Integer>; APaths: TStrings);
+    procedure CollectBuildOrder(const AIndex: Integer; AOrder: TList<Integer>);
+    procedure CollectUnitPaths(const AIndex: Integer; AVisited: TList<Integer>;
       APaths: TStrings);
   public
     constructor Create(ARunner: TMakeRunner);
@@ -143,6 +167,7 @@ type
     function PackageCount: Integer;
     class function ExcludePattern: string;
     class function ShouldExcludeLpkPath(const ALpkPath: string): Boolean;
+    class function ShouldSkipLpk(const ALpkPath: string): Boolean;
   end;
 
   // ---------------------------------------------------------------------------
@@ -180,6 +205,19 @@ type
     procedure RegisterPackageLazbuild(const APath: string);
     procedure RegisterAllPackagesLazbuild(const ASearchDir: string);
     function UsesLazbuild: Boolean;
+    function RunCommandEx(const AExecutable: string; const AArgs: TStrings;
+      const AWorkingDir: string; AStreamToStderr: Boolean;
+      out AOutput: string): Boolean; overload;
+    function RunCommandEx(const AExecutable: string;
+      const AArgs: array of string; const AWorkingDir: string;
+      AStreamToStderr: Boolean; out AOutput: string): Boolean; overload;
+    function RepoRoot: string;
+    function TargetDirectory: string;
+    procedure ForEachLpkInDir(const ARoot: string; ACallback: TLpkPathProc);
+    procedure RunBuiltBinary(const ABinaryPath: string;
+      const AArgs: array of string; const AFailMessage: string);
+    procedure NormalizeFpcTarget(var AValue: string);
+    procedure PrepareProjectBuild(Proj: TLpiProject);
   public
     constructor Create;
     destructor Destroy; override;
@@ -272,11 +310,22 @@ end;
 
 class function TLazXml.ExtractBlock(const AContent, AOpenTag: string): string;
 var
-  P, Q: Integer;
+  P, Q, TagLen: Integer;
   CloseTag: string;
+  NextCh: Char;
 begin
   Result := '';
+  TagLen := Length(AOpenTag) + 1;
   P := Pos('<' + AOpenTag, AContent);
+  while P > 0 do
+  begin
+    if P + TagLen > Length(AContent) then
+      Break;
+    NextCh := AContent[P + TagLen];
+    if (NextCh = '>') or (NextCh = ' ') or (NextCh = #9) or (NextCh = '/') then
+      Break;
+    P := PosEx('<' + AOpenTag, AContent, P + 1);
+  end;
   if P = 0 then
     Exit;
   CloseTag := '</' + AOpenTag + '>';
@@ -345,10 +394,65 @@ begin
   end;
 end;
 
+class function TLazXml.ArgsHasFuPath(const AArgs: TStrings; const APath: string): Boolean;
+var
+  I: Integer;
+  Norm, ArgPath: string;
+begin
+  Result := False;
+  if APath = '' then
+    Exit;
+  Norm := LowerCase(ExpandFileName(ExcludeTrailingPathDelimiter(APath)));
+  for I := 0 to AArgs.Count - 1 do
+  begin
+    if not StartsText('-Fu', AArgs[I]) then
+      Continue;
+    ArgPath := Copy(AArgs[I], 4, MaxInt);
+    if SameText(Norm, LowerCase(ExpandFileName(ExcludeTrailingPathDelimiter(ArgPath)))) then
+      Exit(True);
+  end;
+end;
+
+class procedure TLazXml.AppendFuIfMissing(const APath: string; AArgs: TStrings);
+begin
+  if (APath <> '') and not ArgsHasFuPath(AArgs, APath) then
+    AArgs.Add('-Fu' + IncludeTrailingPathDelimiter(APath));
+end;
+
+class function TLazXml.CollectFileSourceDirs(const AContent, APkgDir, ATargetCpu,
+  ATargetOs: string): TStringList;
+var
+  Block, FilePath, DirPath, Ext: string;
+  Filter: TRegExpr;
+begin
+  Result := TStringList.Create;
+  Result.Sorted := True;
+  Result.Duplicates := dupIgnore;
+  Block := ExtractBlock(AContent, 'Files');
+  if Block = '' then
+    Exit;
+  Filter := TRegExpr.Create('<Filename\s+Value="([^"]+)"\s*/>');
+  try
+    if Filter.Exec(Block) then
+    repeat
+      FilePath := Filter.Match[1];
+      Ext := LowerCase(ExtractFileExt(FilePath));
+      if (Ext = '.pas') or (Ext = '.pp') or (Ext = '.p') then
+      begin
+        DirPath := ResolvePath(ExtractFilePath(FilePath), APkgDir, '', '',
+          ATargetCpu, ATargetOs);
+        if DirPath <> '' then
+          Result.Add(ExcludeTrailingPathDelimiter(DirPath));
+      end;
+    until not Filter.ExecNext;
+  finally
+    Filter.Free;
+  end;
+end;
+
 class function TLazXml.ParseCompilerOptions(const AContent: string): TLazCompilerOptions;
 var
   Block: string;
-  P: Integer;
 begin
   Result.CompilerMode := 'delphi';
   Result.OptLevel := '2';
@@ -358,10 +462,9 @@ begin
   Result.UnitPaths := '';
   Result.UnitOutputDirTemplate := 'lib\$(TargetCPU)-$(TargetOS)';
 
-  P := Pos('<CompilerOptions>', AContent);
-  if P = 0 then
+  Block := ExtractBlock(AContent, 'CompilerOptions');
+  if Block = '' then
     Exit;
-  Block := Copy(AContent, P, MaxInt);
 
   if ExtractAttr(Block, 'OptimizationLevel') <> '' then
     Result.OptLevel := ExtractAttr(Block, 'OptimizationLevel');
@@ -415,6 +518,81 @@ begin
   end;
 end;
 
+class function TLazXml.ExtractPackageNames(const ABlock: string): TStringList;
+var
+  Filter: TRegExpr;
+begin
+  Result := TStringList.Create;
+  if ABlock = '' then
+    Exit;
+  Filter := TRegExpr.Create('<PackageName\s+Value="([^"]+)"\s*/>');
+  try
+    if Filter.Exec(ABlock) then
+      repeat
+        Result.Add(Filter.Match[1]);
+      until not Filter.ExecNext;
+  finally
+    Filter.Free;
+  end;
+end;
+
+class function TLazXml.ExtractPackageNamesFromContent(const AContent,
+  ABlockTag: string): TStringList;
+begin
+  Result := ExtractPackageNames(ExtractBlock(AContent, ABlockTag));
+end;
+
+class function TLazXml.ContentRequiresPackage(const AContent, APackageName,
+  ABlockTag: string): Boolean;
+var
+  Names: TStringList;
+  I: Integer;
+begin
+  Result := False;
+  Names := ExtractPackageNamesFromContent(AContent, ABlockTag);
+  try
+    for I := 0 to Names.Count - 1 do
+      if SameText(Names[I], APackageName) then
+        Exit(True);
+  finally
+    Names.Free;
+  end;
+end;
+
+class function TLazXml.ExtractUnitNames(const AContent: string): TStringList;
+var
+  Filter: TRegExpr;
+begin
+  Result := TStringList.Create;
+  Filter := TRegExpr.Create('<UnitName\s+Value="([^"]+)"\s*/>');
+  try
+    if Filter.Exec(AContent) then
+      repeat
+        Result.Add(Filter.Match[1]);
+      until not Filter.ExecNext;
+  finally
+    Filter.Free;
+  end;
+end;
+
+class procedure TLazXml.AppendPackageBuildArgs(AArgs: TStrings;
+  const AStubFileName, AUnitOutDir: string);
+begin
+  AArgs.Add('-FU' + IncludeTrailingPathDelimiter(AUnitOutDir));
+  AArgs.Add('-B');
+  AArgs.Add(AStubFileName);
+end;
+
+class procedure TLazXml.AppendProjectBuildArgs(AArgs: TStrings;
+  const AMainSource, AUnitOutDir, ATargetBinary: string);
+begin
+  AArgs.Add('-FU' + AUnitOutDir);
+  AArgs.Add('-FE' + ExtractFilePath(ATargetBinary));
+  AArgs.Add('-B');
+  AArgs.Add('-o' + ATargetBinary);
+  AArgs.Add(AMainSource);
+end;
+
 // ---------------------------------------------------------------------------
 // TProjectFiles
 // ---------------------------------------------------------------------------
@@ -433,6 +611,19 @@ begin
   Result := False;
 end;
 
+class function TProjectFiles.IsBackupDir(const ADirName: string): Boolean;
+begin
+  Result := SameText(ADirName, 'backup');
+end;
+
+class function TProjectFiles.ShouldExcludePath(const AFilePath: string): Boolean;
+var
+  Norm: string;
+begin
+  Norm := LowerCase(ExpandFileName(AFilePath));
+  Result := Pos(PathDelim + 'backup' + PathDelim, Norm) > 0;
+end;
+
 class procedure TProjectFiles.FindRecursive(const ADir, AMask: string;
   AList: TStrings);
 var
@@ -445,10 +636,15 @@ begin
     repeat
       if (Search.Name = '.') or (Search.Name = '..') then
         Continue;
-      EntryPath := DirPath + Search.Name;
       if (Search.Attr and faDirectory) <> 0 then
-        FindRecursive(EntryPath, AMask, AList)
-      else if MatchesMask(Search.Name, AMask) then
+      begin
+        if IsBackupDir(Search.Name) then
+          Continue;
+        FindRecursive(DirPath + Search.Name, AMask, AList);
+        Continue;
+      end;
+      EntryPath := DirPath + Search.Name;
+      if MatchesMask(Search.Name, AMask) and not ShouldExcludePath(EntryPath) then
         AList.Add(EntryPath);
     until FindNext(Search) <> 0;
   finally
@@ -462,6 +658,32 @@ begin
   FindRecursive(ASearchDir, AMask, Result);
 end;
 
+class procedure TProjectFiles.RemoveRecursive(const ADir: string);
+var
+  Search: TSearchRec;
+  NormDir, DirPath, EntryPath: string;
+begin
+  if (ADir = '') or not DirectoryExists(ADir) then
+    Exit;
+  NormDir := ExpandFileName(ADir);
+  DirPath := IncludeTrailingPathDelimiter(NormDir);
+  if FindFirst(DirPath + '*', faAnyFile, Search) = 0 then
+  try
+    repeat
+      if (Search.Name = '.') or (Search.Name = '..') then
+        Continue;
+      EntryPath := DirPath + Search.Name;
+      if (Search.Attr and faDirectory) <> 0 then
+        RemoveRecursive(EntryPath)
+      else
+        DeleteFile(EntryPath);
+    until FindNext(Search) <> 0;
+  finally
+    FindClose(Search);
+  end;
+  RemoveDir(NormDir);
+end;
+
 // ---------------------------------------------------------------------------
 // TLpiProject
 // ---------------------------------------------------------------------------
@@ -472,8 +694,7 @@ constructor TLpiProject.CreateFromFile(const ALpiPath, ATargetCpu,
   ATargetOs: string);
 var
   Content, Block, Name: string;
-  P: Integer;
-  Filter: TRegExpr;
+  PkgNames: TStringList;
 begin
   inherited Create;
   FRequiredPackageNames := TStringList.Create;
@@ -487,19 +708,16 @@ begin
   FOptions := TLazXml.ParseCompilerOptions(Content);
   FUnitOutDir := TLazXml.ResolveUnitOutputDir(FOptions, FProjDir, ATargetCpu, ATargetOs);
 
-  P := Pos('<Unit0>', Content);
-  if P > 0 then
-    Block := Copy(Content, P, MaxInt)
-  else
+  Block := TLazXml.ExtractBlock(Content, 'Unit0');
+  if Block = '' then
     Block := Content;
   Name := TLazXml.ExtractAttr(Block, 'Filename');
   if Name <> '' then
     FMainLpr := TLazXml.ResolvePath(Name, FProjDir, '', '', ATargetCpu, ATargetOs);
 
-  P := Pos('<Target>', Content);
-  if P > 0 then
+  Block := TLazXml.ExtractBlock(Content, 'Target');
+  if Block <> '' then
   begin
-    Block := Copy(Content, P, 500);
     Name := TLazXml.ExtractAttr(Block, 'Filename');
     if Name <> '' then
       FTargetBinary := TLazXml.ResolvePath(Name, FProjDir, FUnitOutDir, '',
@@ -508,18 +726,11 @@ begin
   if FTargetBinary = '' then
     FTargetBinary := ChangeFileExt(FMainLpr, '');
 
-  Block := TLazXml.ExtractBlock(Content, 'RequiredPkgs');
-  if Block <> '' then
-  begin
-    Filter := TRegExpr.Create('<PackageName\s+Value="([^"]+)"\s*/>');
-    try
-      if Filter.Exec(Block) then
-      repeat
-        FRequiredPackageNames.Add(Filter.Match[1]);
-      until not Filter.ExecNext;
-    finally
-      Filter.Free;
-    end;
+  PkgNames := TLazXml.ExtractPackageNamesFromContent(Content, 'RequiredPackages');
+  try
+    FRequiredPackageNames.Assign(PkgNames);
+  finally
+    PkgNames.Free;
   end;
 end;
 
@@ -545,11 +756,8 @@ begin
     ATargetCpu, ATargetOs, Result);
   if Assigned(AExtraUnitPaths) then
     for I := 0 to AExtraUnitPaths.Count - 1 do
-      Result.Add('-Fu' + AExtraUnitPaths[I]);
-  Result.Add('-FU' + FUnitOutDir);
-  Result.Add('-FE' + ExtractFilePath(FTargetBinary));
-  Result.Add('-o' + FTargetBinary);
-  Result.Add(FMainLpr);
+      TLazXml.AppendFuIfMissing(AExtraUnitPaths[I], Result);
+  TLazXml.AppendProjectBuildArgs(Result, FMainLpr, FUnitOutDir, FTargetBinary);
 end;
 
 // ---------------------------------------------------------------------------
@@ -561,11 +769,10 @@ end;
 constructor TLpkPackage.CreateFromFile(const ALpkPath, ATargetCpu,
   ATargetOs: string);
 var
-  Content: string;
-  P: Integer;
-  Filter: TRegExpr;
-  Block: string;
-  Units, UnitName: string;
+  Content, Block: string;
+  Units: string;
+  UnitNames, PkgNames: TStringList;
+  I: Integer;
   SL: TStringList;
 begin
   inherited Create;
@@ -574,48 +781,47 @@ begin
   FPkgDir := ExtractFilePath(ALpkPath);
 
   if not FileExists(ALpkPath) then
+  begin
+    FSourceDirs := TStringList.Create;
     Exit;
+  end;
 
   Content := TLazXml.ReadFile(ALpkPath);
-  P := Pos('<Package>', Content);
-  if P > 0 then
-    FPackageName := TLazXml.ExtractAttr(Copy(Content, P, 2000), 'Name')
+  FSourceDirs := TLazXml.CollectFileSourceDirs(Content, FPkgDir, ATargetCpu, ATargetOs);
+  Block := TLazXml.ExtractBlock(Content, 'Package');
+  if Block <> '' then
+    FPackageName := TLazXml.ExtractAttr(Block, 'Name')
   else
     FPackageName := TLazXml.ExtractAttr(Content, 'Name');
   FOptions := TLazXml.ParseCompilerOptions(Content);
   FUnitOutDir := TLazXml.ResolveUnitOutputDir(FOptions, FPkgDir, ATargetCpu, ATargetOs);
 
-  Block := TLazXml.ExtractBlock(Content, 'RequiredPkgs');
-  if Block <> '' then
-  begin
-    Filter := TRegExpr.Create('<PackageName\s+Value="([^"]+)"\s*/>');
-    try
-      if Filter.Exec(Block) then
-      repeat
-        if SameText(Filter.Match[1], 'LCL') then
-          FHasLclDependency := True;
-        FRequiredNames.Add(Filter.Match[1]);
-      until not Filter.ExecNext;
-    finally
-      Filter.Free;
+  PkgNames := TLazXml.ExtractPackageNamesFromContent(Content, 'RequiredPkgs');
+  try
+    for I := 0 to PkgNames.Count - 1 do
+    begin
+      if SameText(PkgNames[I], 'LCL') then
+        FHasLclDependency := True;
+      FRequiredNames.Add(PkgNames[I]);
     end;
+  finally
+    PkgNames.Free;
   end;
 
   FStubPas := IncludeTrailingPathDelimiter(FPkgDir) + FPackageName + '.pas';
   if not FileExists(FStubPas) then
   begin
     Units := '';
-    Filter := TRegExpr.Create('<UnitName\s+Value="([^"]+)"\s*/>');
+    UnitNames := TLazXml.ExtractUnitNames(Content);
     try
-      if Filter.Exec(Content) then
-      repeat
-        UnitName := Filter.Match[1];
+      for I := 0 to UnitNames.Count - 1 do
+      begin
         if Units <> '' then
           Units := Units + ', ';
-        Units := Units + UnitName;
-      until not Filter.ExecNext;
+        Units := Units + UnitNames[I];
+      end;
     finally
-      Filter.Free;
+      UnitNames.Free;
     end;
 
     SL := TStringList.Create;
@@ -642,8 +848,15 @@ end;
 
 destructor TLpkPackage.Destroy;
 begin
+  FSourceDirs.Free;
   FRequiredNames.Free;
   inherited Destroy;
+end;
+
+function TLpkPackage.ResolveUnitOutDir(const ATargetCpu, ATargetOs: string): string;
+begin
+  FUnitOutDir := TLazXml.ResolveUnitOutputDir(FOptions, FPkgDir, ATargetCpu, ATargetOs);
+  Result := FUnitOutDir;
 end;
 
 function TLpkPackage.IsValid: Boolean;
@@ -654,26 +867,13 @@ end;
 
 class function TLpkPackage.HasLclDependencyInFile(const ALpkPath: string): Boolean;
 var
-  Content, Block: string;
-  Filter: TRegExpr;
+  Content: string;
 begin
   Result := False;
   if not FileExists(ALpkPath) then
     Exit;
   Content := TLazXml.ReadFile(ALpkPath);
-  Block := TLazXml.ExtractBlock(Content, 'RequiredPkgs');
-  if Block = '' then
-    Exit;
-  Filter := TRegExpr.Create('<PackageName\s+Value="([^"]+)"\s*/>');
-  try
-    if Filter.Exec(Block) then
-      repeat
-        if SameText(Filter.Match[1], 'LCL') then
-          Exit(True);
-      until not Filter.ExecNext;
-  finally
-    Filter.Free;
-  end;
+  Result := TLazXml.ContentRequiresPackage(Content, 'LCL', 'RequiredPkgs');
 end;
 
 // ---------------------------------------------------------------------------
@@ -705,11 +905,17 @@ begin
   end;
 end;
 
+class function TPackageGraph.ShouldSkipLpk(const ALpkPath: string): Boolean;
+begin
+  Result := ShouldExcludeLpkPath(ALpkPath) or
+    TLpkPackage.HasLclDependencyInFile(ALpkPath);
+end;
+
 constructor TPackageGraph.Create(ARunner: TMakeRunner);
 begin
   inherited Create;
   FRunner := ARunner;
-  FItems := TObjectList.Create(True);
+  FItems := TObjectList<TLpkPackage>.Create(True);
   FNameToIndex := TStringList.Create;
   FNameToIndex.Sorted := True;
   FNameToIndex.Duplicates := dupError;
@@ -724,7 +930,7 @@ end;
 
 function TPackageGraph.GetPackage(Index: Integer): TLpkPackage;
 begin
-  Result := TLpkPackage(FItems[Index]);
+  Result := FItems[Index];
 end;
 
 function TPackageGraph.PackageCount: Integer;
@@ -752,21 +958,18 @@ procedure TPackageGraph.RegisterLpk(const ALpkPath: string);
 var
   Pkg: TLpkPackage;
 begin
-  if ShouldExcludeLpkPath(ALpkPath) then
+  if ShouldSkipLpk(ALpkPath) then
+  begin
+    if not ShouldExcludeLpkPath(ALpkPath) then
+      FRunner.Log(CSI_Yellow, 'skip LCL-dependent package ' + ALpkPath);
     Exit;
+  end;
 
   Pkg := TLpkPackage.CreateFromFile(ALpkPath, FRunner.TargetCpu, FRunner.TargetOs);
   if not Pkg.IsValid then
   begin
     FRunner.Log(CSI_Red, 'failed to load package: ' + ALpkPath);
     FRunner.IncError;
-    Pkg.Free;
-    Exit;
-  end;
-
-  if Pkg.HasLclDependency then
-  begin
-    FRunner.Log(CSI_Yellow, 'skip LCL-dependent package ' + ALpkPath);
     Pkg.Free;
     Exit;
   end;
@@ -797,132 +1000,130 @@ begin
   end;
 end;
 
-procedure TPackageGraph.ForEachPackageDependency(const AIndex: Integer;
-  const AProc: TDepIndexProc);
+function TPackageGraph.ResolveDepIndex(const APackageName,
+  AContext: string): Integer;
+begin
+  Result := FindIndexByName(APackageName);
+  if Result < 0 then
+  begin
+    FRunner.Log(CSI_Red, Format('%s requires unknown package "%s"',
+      [AContext, APackageName]));
+    FRunner.IncError;
+  end;
+end;
+
+procedure TPackageGraph.VisitPackageDeps(const AIndex: Integer;
+  AVisited: TList<Integer>; AKind: TDepVisitKind; AOrder: TList<Integer>;
+  APaths: TStrings);
 var
   Pkg: TLpkPackage;
+  Path: string;
   I, DepIdx: Integer;
   DepName: string;
 begin
   if (AIndex < 0) or (AIndex >= FItems.Count) then
     Exit;
+
+  case AKind of
+    TDepVisitKind.BuildOrder:
+      if AOrder.IndexOf(AIndex) >= 0 then
+        Exit;
+    TDepVisitKind.UnitPaths:
+      begin
+        if AVisited.IndexOf(AIndex) >= 0 then
+          Exit;
+        AVisited.Add(AIndex);
+      end;
+  end;
+
   Pkg := GetPackage(AIndex);
   for I := 0 to Pkg.RequiredNames.Count - 1 do
   begin
     DepName := Pkg.RequiredNames[I];
     if IsBuiltinPackage(DepName) then
       Continue;
-    DepIdx := FindIndexByName(DepName);
+    DepIdx := ResolveDepIndex(DepName, 'package "' + Pkg.PackageName + '"');
     if DepIdx < 0 then
-    begin
-      FRunner.Log(CSI_Red, Format('package "%s" requires unknown "%s"',
-        [Pkg.PackageName, DepName]));
-      FRunner.IncError;
       Continue;
-    end;
-    AProc(DepIdx);
+    VisitPackageDeps(DepIdx, AVisited, AKind, AOrder, APaths);
+  end;
+
+  case AKind of
+    TDepVisitKind.BuildOrder:
+      AOrder.Add(AIndex);
+    TDepVisitKind.UnitPaths:
+      begin
+        Path := Pkg.ResolveUnitOutDir(FRunner.TargetCpu, FRunner.TargetOs);
+        if (Path <> '') and (APaths.IndexOf(Path) < 0) then
+          APaths.Add(Path);
+      end;
   end;
 end;
 
-procedure TPackageGraph.CollectBuildOrder(const AIndex: Integer; AOrder: TList);
-
-  procedure VisitDep(DepIdx: Integer);
-  begin
-    CollectBuildOrder(DepIdx, AOrder);
-  end;
-
+procedure TPackageGraph.CollectBuildOrder(const AIndex: Integer;
+  AOrder: TList<Integer>);
 begin
-  if (AIndex < 0) or (AIndex >= FItems.Count) then
-    Exit;
-  if AOrder.IndexOf(Pointer(AIndex)) >= 0 then
-    Exit;
-  ForEachPackageDependency(AIndex, @VisitDep);
-  AOrder.Add(Pointer(AIndex));
+  VisitPackageDeps(AIndex, nil, TDepVisitKind.BuildOrder, AOrder, nil);
 end;
 
-procedure TPackageGraph.CollectUnitPaths(const AIndex: Integer; AVisited: TList;
-  APaths: TStrings);
-
-  procedure VisitDep(DepIdx: Integer);
-  begin
-    CollectUnitPaths(DepIdx, AVisited, APaths);
-  end;
-
-var
-  Pkg: TLpkPackage;
-  Path: string;
+procedure TPackageGraph.CollectUnitPaths(const AIndex: Integer;
+  AVisited: TList<Integer>; APaths: TStrings);
 begin
-  if (AIndex < 0) or (AIndex >= FItems.Count) then
-    Exit;
-  if AVisited.IndexOf(Pointer(AIndex)) >= 0 then
-    Exit;
-  AVisited.Add(Pointer(AIndex));
-
-  ForEachPackageDependency(AIndex, @VisitDep);
-
-  Pkg := GetPackage(AIndex);
-  Path := Pkg.UnitOutDir;
-  if (Path <> '') and (APaths.IndexOf(Path) < 0) then
-    APaths.Add(Path);
+  VisitPackageDeps(AIndex, AVisited, TDepVisitKind.UnitPaths, nil, APaths);
 end;
 
 function TPackageGraph.BuildAll: Boolean;
 var
-  Order: TList;
+  Order: TList<Integer>;
   I, Idx, J: Integer;
   Pkg: TLpkPackage;
   Args: TStringList;
-  BuildOutput: AnsiString;
-  ArgArray: array of string;
+  BuildOutput: string;
+  OutDir: string;
   DepPath: string;
 begin
   Result := True;
   if FItems.Count = 0 then
     Exit;
 
-  Order := TList.Create;
+  Order := TList<Integer>.Create;
   try
     for I := 0 to FItems.Count - 1 do
       CollectBuildOrder(I, Order);
 
     for I := 0 to Order.Count - 1 do
     begin
-      Idx := Integer(Order[I]);
+      Idx := Order[I];
       Pkg := GetPackage(Idx);
 
+      OutDir := Pkg.ResolveUnitOutDir(FRunner.TargetCpu, FRunner.TargetOs);
+
       FRunner.LogInline(CSI_Yellow, 'build package ' + Pkg.PackageName);
-      ForceDirectories(Pkg.UnitOutDir);
+      TProjectFiles.RemoveRecursive(OutDir);
+      ForceDirectories(OutDir);
 
       Args := TStringList.Create;
       try
-        TLazXml.AppendCompilerOptionsToArgv(Pkg.Options, Pkg.PkgDir, Pkg.UnitOutDir,
-          Pkg.UnitOutDir, FRunner.TargetCpu, FRunner.TargetOs, Args);
+        TLazXml.AppendCompilerOptionsToArgv(Pkg.Options, Pkg.PkgDir, OutDir,
+          OutDir, FRunner.TargetCpu, FRunner.TargetOs, Args);
+        for J := 0 to Pkg.SourceDirs.Count - 1 do
+          TLazXml.AppendFuIfMissing(Pkg.SourceDirs[J], Args);
+        TLazXml.AppendFuIfMissing(Pkg.PkgDir, Args);
         for J := 0 to Pkg.RequiredNames.Count - 1 do
         begin
           if IsBuiltinPackage(Pkg.RequiredNames[J]) then
             Continue;
           DepPath := UnitPathFor(Pkg.RequiredNames[J]);
-          if DepPath <> '' then
-            Args.Add('-Fu' + DepPath);
+          TLazXml.AppendFuIfMissing(DepPath, Args);
         end;
-        Args.Add('-FU' + Pkg.UnitOutDir);
-        Args.Add('-FE' + Pkg.UnitOutDir);
-        Args.Add('-B');
-        Args.Add(Pkg.StubPas);
+        TLazXml.AppendPackageBuildArgs(Args, ExtractFileName(Pkg.StubPas), OutDir);
 
-        SetLength(ArgArray, Args.Count);
-        for J := 0 to Args.Count - 1 do
-          ArgArray[J] := Args[J];
-        if RunCommand('fpc', ArgArray, BuildOutput) then
-        begin
-          WriteLn(stderr, string(BuildOutput));
-          FRunner.Log(CSI_Green, ' -> ' + Pkg.UnitOutDir);
-        end
+        if FRunner.RunCommandEx('fpc', Args, Pkg.PkgDir, True, BuildOutput) then
+          FRunner.Log(CSI_Green, ' -> ' + OutDir)
         else
         begin
-          WriteLn(stderr, string(BuildOutput));
           FRunner.IncError;
-          FRunner.ReportBuildErrors(string(BuildOutput));
+          FRunner.ReportBuildErrors(BuildOutput);
           Result := False;
         end;
       finally
@@ -942,19 +1143,19 @@ begin
   Idx := FindIndexByName(APackageName);
   if (Idx < 0) or (Idx >= FItems.Count) then
     Exit;
-  Result := GetPackage(Idx).UnitOutDir;
+  Result := GetPackage(Idx).ResolveUnitOutDir(FRunner.TargetCpu, FRunner.TargetOs);
 end;
 
 function TPackageGraph.UnitPathsForRequired(const ANames: TStrings): TStringList;
 var
   I, Idx: Integer;
-  Visited: TList;
+  Visited: TList<Integer>;
 begin
   Result := TStringList.Create;
   if not Assigned(ANames) then
     Exit;
 
-  Visited := TList.Create;
+  Visited := TList<Integer>.Create;
   try
     for I := 0 to ANames.Count - 1 do
     begin
@@ -1051,9 +1252,9 @@ end;
 
 function TMakeRunner.ResolveAutoBackend: TBuildBackend;
 var
-  Output: AnsiString;
+  Output: string;
 begin
-  if RunCommand('lazbuild', ['--version'], Output) then
+  if RunCommandEx('lazbuild', ['--version'], '', False, Output) then
     Exit(TBuildBackend.Lazbuild);
   Result := TBuildBackend.Fpc;
 end;
@@ -1065,24 +1266,171 @@ begin
   Result := FBackend = TBuildBackend.Lazbuild;
 end;
 
+function TMakeRunner.RunCommandEx(const AExecutable: string; const AArgs: TStrings;
+  const AWorkingDir: string; AStreamToStderr: Boolean;
+  out AOutput: string): Boolean; overload;
+var
+  Proc: TProcess;
+  OutStream: TStringStream;
+  Count: LongInt;
+  Buffer: array[0..8191] of Byte;
+  Chunk: string;
+
+  procedure DrainOutput;
+  begin
+    while Proc.Output.NumBytesAvailable > 0 do
+    begin
+      Count := Proc.Output.Read(Buffer, SizeOf(Buffer));
+      if Count <= 0 then
+        Break;
+      OutStream.WriteBuffer(Buffer, Count);
+      if AStreamToStderr then
+      begin
+        SetLength(Chunk, Count);
+        Move(Buffer[0], Chunk[1], Count);
+        Write(stderr, Chunk);
+      end;
+    end;
+  end;
+
+begin
+  AOutput := '';
+  Proc := TProcess.Create(nil);
+  OutStream := TStringStream.Create('');
+  try
+    Proc.Executable := AExecutable;
+    Proc.Parameters.Assign(AArgs);
+    if AWorkingDir <> '' then
+      Proc.CurrentDirectory := AWorkingDir;
+    Proc.Options := [poUsePipes, poStderrToOutPut];
+    Proc.ShowWindow := swoHide;
+    Proc.Execute;
+    repeat
+      DrainOutput;
+      if Proc.Running then
+        Sleep(10);
+    until not Proc.Running;
+    DrainOutput;
+    Proc.WaitOnExit;
+    AOutput := OutStream.DataString;
+    Result := Proc.ExitStatus = 0;
+  finally
+    OutStream.Free;
+    Proc.Free;
+  end;
+end;
+
+function TMakeRunner.RunCommandEx(const AExecutable: string;
+  const AArgs: array of string; const AWorkingDir: string;
+  AStreamToStderr: Boolean; out AOutput: string): Boolean; overload;
+var
+  SL: TStringList;
+  I: Integer;
+begin
+  SL := TStringList.Create;
+  try
+    for I := 0 to High(AArgs) do
+      SL.Add(AArgs[I]);
+    Result := RunCommandEx(AExecutable, SL, AWorkingDir, AStreamToStderr, AOutput);
+  finally
+    SL.Free;
+  end;
+end;
+
+procedure TMakeRunner.NormalizeFpcTarget(var AValue: string);
+begin
+  AValue := StringReplace(AValue, #13, '', [rfReplaceAll]);
+  AValue := StringReplace(AValue, #10, '', [rfReplaceAll]);
+  AValue := Trim(AValue);
+end;
+
+function TMakeRunner.RepoRoot: string;
+var
+  Seeds: array[0..1] of string;
+  I: Integer;
+  Candidate, Parent, DemoDir: string;
+begin
+  Seeds[0] := ExpandFileName(ExtractFilePath(ParamStr(0)));
+  Seeds[1] := ExpandFileName(GetCurrentDir);
+  for I := 0 to High(Seeds) do
+  begin
+    Candidate := Seeds[I];
+    while Candidate <> '' do
+    begin
+      DemoDir := IncludeTrailingPathDelimiter(ConcatPaths([Candidate, Target]));
+      if DirectoryExists(DemoDir) then
+        Exit(ExcludeTrailingPathDelimiter(Candidate));
+      Parent := ExpandFileName(IncludeTrailingPathDelimiter(Candidate) + '..');
+      if SameText(Parent, Candidate) then
+        Break;
+      Candidate := Parent;
+    end;
+  end;
+  Result := GetCurrentDir;
+end;
+
+function TMakeRunner.TargetDirectory: string;
+begin
+  Result := IncludeTrailingPathDelimiter(ConcatPaths([RepoRoot, Target]));
+end;
+
+procedure TMakeRunner.ForEachLpkInDir(const ARoot: string;
+  ACallback: TLpkPathProc);
+var
+  List: TStringList;
+  Each: string;
+begin
+  if not Assigned(ACallback) or not DirectoryExists(ARoot) then
+    Exit;
+  List := TProjectFiles.FindAll(ARoot, '*.lpk');
+  try
+    for Each in List do
+      ACallback(Each);
+  finally
+    List.Free;
+  end;
+end;
+
+procedure TMakeRunner.RunBuiltBinary(const ABinaryPath: string;
+  const AArgs: array of string; const AFailMessage: string);
+var
+  Output: string;
+begin
+  if RunCommandEx(ABinaryPath, AArgs, '', False, Output) then
+    WriteLn(Output)
+  else
+  begin
+    IncError;
+    if AFailMessage <> '' then
+      Log(CSI_Red, AFailMessage);
+    WriteLn(stderr, Output);
+  end;
+end;
+
 procedure TMakeRunner.InitEnvironment;
 var
   Requested: TBuildBackend;
-  Output: AnsiString;
+  Output: string;
 begin
   if FBackendResolved then
     Exit;
 
-  if RunCommand('fpc', ['-iT'], Output) then
-    FTargetCpu := Trim(string(Output));
-  if RunCommand('fpc', ['-iSO'], Output) then
-    FTargetOs := Trim(string(Output));
+  if RunCommandEx('fpc', ['-iTP'], '', False, Output) then
+    FTargetCpu := Output;
+  if RunCommandEx('fpc', ['-iTO'], '', False, Output) then
+    FTargetOs := Output;
+  NormalizeFpcTarget(FTargetCpu);
+  NormalizeFpcTarget(FTargetOs);
+  if FTargetCpu = '' then
+    raise Exception.Create('fpc -iTP returned empty TargetCPU');
+  if FTargetOs = '' then
+    raise Exception.Create('fpc -iTO returned empty TargetOS');
 
   Requested := ParseBackendEnv;
   case Requested of
     TBuildBackend.Lazbuild:
       begin
-        if not RunCommand('lazbuild', ['--version'], Output) then
+        if not RunCommandEx('lazbuild', ['--version'], '', False, Output) then
           raise Exception.Create('MAKE_BUILD_BACKEND=lazbuild but lazbuild not found');
         FBackend := TBuildBackend.Lazbuild;
       end;
@@ -1105,13 +1453,13 @@ end;
 
 procedure TMakeRunner.UpdateSubmodules;
 var
-  CommandOutput: AnsiString;
+  CommandOutput: string;
 begin
   if not FileExists('.gitmodules') then
     Exit;
-  if RunCommand('git', ['submodule', 'update', '--init', '--recursive',
-    '--force', '--remote'], CommandOutput) then
-    Log(CSI_Yellow, Trim(string(CommandOutput)));
+  if RunCommandEx('git', ['submodule', 'update', '--init', '--recursive',
+    '--force', '--remote'], '', False, CommandOutput) then
+    Log(CSI_Yellow, Trim(CommandOutput));
 end;
 
 // FPC 3.2.2 hardcodes OpenSSL 1.1 DLL names on Windows, but
@@ -1222,31 +1570,22 @@ end;
 
 procedure TMakeRunner.RegisterPackageLazbuild(const APath: string);
 var
-  CommandOutput: AnsiString;
+  CommandOutput: string;
 begin
-  if TPackageGraph.ShouldExcludeLpkPath(APath) then
-    Exit;
-  if TLpkPackage.HasLclDependencyInFile(APath) then
+  if TPackageGraph.ShouldSkipLpk(APath) then
   begin
-    Log(CSI_Yellow, 'skip LCL-dependent package ' + APath);
+    if not TPackageGraph.ShouldExcludeLpkPath(APath) then
+      Log(CSI_Yellow, 'skip LCL-dependent package ' + APath);
     Exit;
   end;
-  if RunCommand('lazbuild', ['--add-package-link', APath], CommandOutput) then
+  if RunCommandEx('lazbuild', ['--add-package-link', APath], '', False,
+    CommandOutput) then
     Log(CSI_Yellow, 'added ' + APath);
 end;
 
 procedure TMakeRunner.RegisterAllPackagesLazbuild(const ASearchDir: string);
-var
-  List: TStringList;
-  Each: string;
 begin
-  List := TProjectFiles.FindAll(ASearchDir, '*.lpk');
-  try
-    for Each in List do
-      RegisterPackageLazbuild(Each);
-  finally
-    List.Free;
-  end;
+  ForEachLpkInDir(ASearchDir, RegisterPackageLazbuild);
 end;
 
 procedure TMakeRunner.InstallDependencies;
@@ -1267,13 +1606,13 @@ begin
     begin
       for I := 0 to DepDirs.Count - 1 do
         RegisterAllPackagesLazbuild(DepDirs[I]);
-      RegisterAllPackagesLazbuild(GetCurrentDir);
+      RegisterAllPackagesLazbuild(TargetDirectory);
     end
     else
     begin
       for I := 0 to DepDirs.Count - 1 do
         FGraph.DiscoverUnder(DepDirs[I]);
-      FGraph.DiscoverUnder(GetCurrentDir);
+      FGraph.DiscoverUnder(TargetDirectory);
       if FGraph.PackageCount > 0 then
         FGraph.BuildAll;
     end;
@@ -1306,25 +1645,47 @@ begin
     end;
 end;
 
+procedure TMakeRunner.PrepareProjectBuild(Proj: TLpiProject);
+begin
+  TProjectFiles.RemoveRecursive(Proj.UnitOutDir);
+  if FileExists(Proj.TargetBinary) then
+    DeleteFile(Proj.TargetBinary);
+  ForceDirectories(ExtractFilePath(Proj.TargetBinary));
+  ForceDirectories(Proj.UnitOutDir);
+end;
+
 function TMakeRunner.BuildProjectWithLazbuild(const APath: string): string;
 var
-  BuildOutput: AnsiString;
+  Proj: TLpiProject;
+  BuildOutput: string;
 begin
   Result := '';
-  if RunCommand('lazbuild', ['--build-all', '--recursive',
-    '--no-write-project', APath], BuildOutput) then
-  begin
-    Result := ExtractBinaryFromBuildLog(string(BuildOutput), '');
-    if Result <> '' then
-      Log(CSI_Green, ' -> ' + Result)
+  Proj := TLpiProject.CreateFromFile(APath, FTargetCpu, FTargetOs);
+  try
+    if not Proj.IsValid then
+    begin
+      Log(CSI_Red, 'invalid project: ' + APath);
+      IncError;
+      Exit;
+    end;
+    PrepareProjectBuild(Proj);
+    if RunCommandEx('lazbuild', ['--build-all', '--recursive',
+      '--no-write-project', APath], '', True, BuildOutput) then
+    begin
+      Result := ExtractBinaryFromBuildLog(BuildOutput, Proj.TargetBinary);
+      if Result <> '' then
+        Log(CSI_Green, ' -> ' + Result)
+      else
+        WriteLn(stderr, BuildOutput);
+    end
     else
-      WriteLn(stderr, string(BuildOutput));
-  end
-  else
-  begin
-    WriteLn(stderr, string(BuildOutput));
-    IncError;
-    ReportBuildErrors(string(BuildOutput));
+    begin
+      WriteLn(stderr, BuildOutput);
+      IncError;
+      ReportBuildErrors(BuildOutput);
+    end;
+  finally
+    Proj.Free;
   end;
 end;
 
@@ -1332,9 +1693,7 @@ function TMakeRunner.BuildProjectWithFpc(const APath: string): string;
 var
   Proj: TLpiProject;
   ExtraPaths, Args: TStringList;
-  BuildOutput: AnsiString;
-  ArgArray: array of string;
-  I: Integer;
+  BuildOutput: string;
 begin
   Result := '';
   Proj := TLpiProject.CreateFromFile(APath, FTargetCpu, FTargetOs);
@@ -1346,18 +1705,14 @@ begin
       Exit;
     end;
 
-    ForceDirectories(ExtractFilePath(Proj.TargetBinary));
+    PrepareProjectBuild(Proj);
     ExtraPaths := FGraph.UnitPathsForRequired(Proj.RequiredPackageNames);
     try
       Args := Proj.BuildFpcArgv(ExtraPaths, FTargetCpu, FTargetOs);
       try
-        SetLength(ArgArray, Args.Count);
-        for I := 0 to Args.Count - 1 do
-          ArgArray[I] := Args[I];
-        if RunCommand('fpc', ArgArray, BuildOutput) then
+        if RunCommandEx('fpc', Args, Proj.ProjDir, True, BuildOutput) then
         begin
-          WriteLn(stderr, string(BuildOutput));
-          Result := ExtractBinaryFromBuildLog(string(BuildOutput), Proj.TargetBinary);
+          Result := ExtractBinaryFromBuildLog(BuildOutput, Proj.TargetBinary);
           if FileExists(Result) then
             Log(CSI_Green, ' -> ' + Result)
           else
@@ -1368,9 +1723,8 @@ begin
         end
         else
         begin
-          WriteLn(stderr, string(BuildOutput));
           IncError;
-          ReportBuildErrors(string(BuildOutput));
+          ReportBuildErrors(BuildOutput);
         end;
       finally
         Args.Free;
@@ -1405,18 +1759,12 @@ end;
 function TMakeRunner.IsGUIProject(const ALpiPath: string): Boolean;
 var
   Content: string;
-  Filter: TRegExpr;
 begin
   Result := False;
   if not FileExists(ALpiPath) then
     Exit;
   Content := TLazXml.ReadFile(ALpiPath);
-  Filter := TRegExpr.Create('<PackageName\s+Value="LCL"\s*/>');
-  try
-    Result := Filter.Exec(Content);
-  finally
-    Filter.Free;
-  end;
+  Result := TLazXml.ContentRequiresPackage(Content, 'LCL', 'RequiredPackages');
 end;
 
 function TMakeRunner.IsTestProject(const ALpiPath: string): Boolean;
@@ -1434,20 +1782,12 @@ end;
 procedure TMakeRunner.RunTestProject(const APath: string);
 var
   BinaryPath: string;
-  TestOutput: AnsiString;
 begin
   BinaryPath := BuildProject(APath);
   if BinaryPath = '' then
     Exit;
   try
-    if RunCommand(BinaryPath, ['--all', '--format=plain', '--progress'],
-      TestOutput) then
-      WriteLn(stderr, string(TestOutput))
-    else
-    begin
-      IncError;
-      WriteLn(stderr, string(TestOutput));
-    end;
+    RunBuiltBinary(BinaryPath, ['--all', '--format=plain', '--progress'], '');
   except
     on E: Exception do
     begin
@@ -1460,21 +1800,13 @@ end;
 procedure TMakeRunner.RunSampleProject(const APath: string);
 var
   BinaryPath: string;
-  SampleOutput: AnsiString;
 begin
   BinaryPath := BuildProject(APath);
   if BinaryPath = '' then
     Exit;
   try
     Log(CSI_Yellow, 'run ' + BinaryPath);
-    if RunCommand(BinaryPath, [], SampleOutput) then
-      WriteLn(string(SampleOutput))
-    else
-    begin
-      IncError;
-      Log(CSI_Red, 'sample execution failed: ' + BinaryPath);
-      WriteLn(stderr, string(SampleOutput));
-    end;
+    RunBuiltBinary(BinaryPath, [], 'sample execution failed: ' + BinaryPath);
   except
     on E: Exception do
     begin
@@ -1489,7 +1821,7 @@ var
   List: TStringList;
   Each: string;
 begin
-  List := TProjectFiles.FindAll(Target, '*.lpi');
+  List := TProjectFiles.FindAll(TargetDirectory, '*.lpi');
   try
     for Each in List do
     begin
@@ -1512,6 +1844,7 @@ end;
 function TMakeRunner.Execute: Integer;
 begin
   InitEnvironment;
+  Log(CSI_Cyan, 'using target directory: ' + TargetDirectory);
   UpdateSubmodules;
   InstallDependencies;
   BuildAllProjects;

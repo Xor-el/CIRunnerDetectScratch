@@ -30,9 +30,9 @@ ci_fpc_info_probe() {
   local flag="$1"
   local max_attempts="${CI_FPC_PROBE_ATTEMPTS:-3}"
   local delay="${CI_FPC_PROBE_DELAY_SECS:-2}"
-  local attempt value
+  local attempt=1 value
 
-  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+  while [ "$attempt" -le "$max_attempts" ]; do
     value="$(fpc "$flag" 2>/dev/null | head -1 | tr -d '\r\n' || true)"
     if [ -n "$value" ]; then
       if [ "$attempt" -gt 1 ]; then
@@ -45,6 +45,7 @@ ci_fpc_info_probe() {
       echo "::warning::fpc ${flag} returned empty (attempt ${attempt}/${max_attempts}), retrying..." >&2
       sleep "$delay"
     fi
+    attempt=$((attempt + 1))
   done
   echo "::error::fpc ${flag} returned empty after ${max_attempts} attempts" >&2
   return 1

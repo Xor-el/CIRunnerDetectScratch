@@ -23,20 +23,39 @@ ci_export_toolchain_path() {
   fi
 }
 
+# Run fpc with an -i* info flag; retry when stdout is empty (QEMU/subprocess flake).
+# Tuning: CI_FPC_PROBE_ATTEMPTS (default 3), CI_FPC_PROBE_DELAY_SECS (default 2).
+# Prints the probe value to stdout; diagnostics go to stderr.
+ci_fpc_info_probe() {
+  local flag="$1"
+  local max_attempts="${CI_FPC_PROBE_ATTEMPTS:-3}"
+  local delay="${CI_FPC_PROBE_DELAY_SECS:-2}"
+  local attempt value
+
+  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    value="$(fpc "$flag" 2>/dev/null | head -1 | tr -d '\r\n' || true)"
+    if [ -n "$value" ]; then
+      if [ "$attempt" -gt 1 ]; then
+        echo "::notice::fpc ${flag} succeeded on attempt ${attempt}/${max_attempts}" >&2
+      fi
+      printf '%s\n' "$value"
+      return 0
+    fi
+    if [ "$attempt" -lt "$max_attempts" ]; then
+      echo "::warning::fpc ${flag} returned empty (attempt ${attempt}/${max_attempts}), retrying..." >&2
+      sleep "$delay"
+    fi
+  done
+  echo "::error::fpc ${flag} returned empty after ${max_attempts} attempts" >&2
+  return 1
+}
+
 ci_verify_toolchain() {
   local tp to
 
-  fpc -iV
-  tp="$(fpc -iTP 2>/dev/null | head -1 | tr -d '\r\n' || true)"
-  to="$(fpc -iTO 2>/dev/null | head -1 | tr -d '\r\n' || true)"
-  if [ -z "$tp" ]; then
-    echo "::error::fpc -iTP returned empty TargetCPU (QEMU/toolchain flake?)" >&2
-    exit 1
-  fi
-  if [ -z "$to" ]; then
-    echo "::error::fpc -iTO returned empty TargetOS (QEMU/toolchain flake?)" >&2
-    exit 1
-  fi
+  ci_fpc_info_probe -iV
+  tp="$(ci_fpc_info_probe -iTP)" || exit 1
+  to="$(ci_fpc_info_probe -iTO)" || exit 1
   echo "::notice::fpc target: ${tp}-${to}"
   if [ -n "${FPC_TARGET:-}" ]; then
     echo "::notice::FPC_TARGET=${FPC_TARGET}"

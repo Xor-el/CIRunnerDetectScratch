@@ -143,7 +143,7 @@ jobs:
         with:
           submodules: true
 
-      - name: Set up QEMU (ppc64 BE)
+      - name: Set up QEMU (ppc64 BE, pinned)
         run: bash .github/workflows/ci/ppc64-qemu-setup.sh
 
       - name: Build (PowerPC64 BE via QEMU)

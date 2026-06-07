@@ -24,7 +24,20 @@ ci_export_toolchain_path() {
 }
 
 ci_verify_toolchain() {
+  local tp to
+
   fpc -iV
+  tp="$(fpc -iTP 2>/dev/null | head -1 | tr -d '\r\n' || true)"
+  to="$(fpc -iTO 2>/dev/null | head -1 | tr -d '\r\n' || true)"
+  if [ -z "$tp" ]; then
+    echo "::error::fpc -iTP returned empty TargetCPU (QEMU/toolchain flake?)" >&2
+    exit 1
+  fi
+  if [ -z "$to" ]; then
+    echo "::error::fpc -iTO returned empty TargetOS (QEMU/toolchain flake?)" >&2
+    exit 1
+  fi
+  echo "::notice::fpc target: ${tp}-${to}"
   if [ -n "${FPC_TARGET:-}" ]; then
     echo "::notice::FPC_TARGET=${FPC_TARGET}"
   fi

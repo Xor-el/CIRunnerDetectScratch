@@ -12,6 +12,8 @@ internal static class Program
 {
     private static int Main()
     {
+        Console.WriteLine($"ENDIAN={(BitConverter.IsLittleEndian ? "little" : "big")}");
+
         var arch = RuntimeInformation.ProcessArchitecture;
         if (arch is Architecture.X64 or Architecture.X86)
         {

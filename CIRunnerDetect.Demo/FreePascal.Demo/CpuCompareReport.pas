@@ -9,7 +9,7 @@ procedure RunCpuCapabilityCompare;
 implementation
 
 uses
-  SysUtils, Classes, Process, HlpSimdLevels, HlpCpuFeatures;
+  SysUtils, Classes, Process, HlpSimdLevels, HlpCpuFeatures, HlpRuntimeEndian;
 
 const
   NetColUnavailable = '(unavailable)';
@@ -254,6 +254,40 @@ begin
   WriteLn(Format('%-24s %14s %14s %10s', [AFeature, AHash, ANet, AMatch]));
 end;
 
+procedure ReportPlatformBasics;
+var
+  RuntimeS, CompileS: string;
+begin
+  RuntimeS := TRuntimeEndian.AsString();
+  CompileS := TRuntimeEndian.CompileTimeAsString();
+  WriteLn('--- Platform ---');
+  WriteLn(Format('Runtime endian:       %s', [RuntimeS]));
+  WriteLn(Format('Compile-time endian:  %s', [CompileS]));
+  if not SameText(RuntimeS, CompileS) then
+    WriteLn('WARNING: runtime and compile-time endian differ');
+  WriteLn('');
+end;
+
+procedure RowEndian(const Lines: TStrings; const DotNetProbeOk: Boolean;
+  Mis: TStrings);
+var
+  HL, NL: string;
+begin
+  if not DotNetProbeOk then
+    Exit;
+  HL := TRuntimeEndian.AsString();
+  NL := NativeValueStr(Lines, 'ENDIAN');
+  if NL = '' then
+    NL := '(missing)';
+  if SameText(HL, NL) then
+    PrintRow('Endian', HL, NL, 'yes')
+  else
+  begin
+    PrintRow('Endian', HL, NL, 'NO');
+    Mis.Add('Endian');
+  end;
+end;
+
 procedure Summarize(const Mis: TStrings; const DotNetProbeOk: Boolean);
 var
   I: Integer;
@@ -301,6 +335,7 @@ begin
   Mis := TStringList.Create;
   try
     PrintHeader;
+    RowEndian(Lines, DotNetProbeOk, Mis);
     HL := X86LevelToStr(TCpuFeatures.X86.GetActiveSimdLevel());
     if not DotNetProbeOk then
       PrintRow('Simd level', HL, NetColUnavailable, '-')
@@ -358,6 +393,7 @@ begin
   Mis := TStringList.Create;
   try
     PrintHeader;
+    RowEndian(Lines, DotNetProbeOk, Mis);
     HL := ArmLevelToStr(TCpuFeatures.Arm.GetActiveSimdLevel());
     if not DotNetProbeOk then
       PrintRow('Simd level', HL, NetColUnavailable, '-')
@@ -411,6 +447,7 @@ begin
   Mis := TStringList.Create;
   try
     PrintHeader;
+    RowEndian(Lines, DotNetProbeOk, Mis);
     HL := PpcLevelToStr(TCpuFeatures.Ppc.GetActiveSimdLevel());
     if not DotNetProbeOk then
       PrintRow('Simd level', HL, NetColUnavailable, '-')
@@ -474,6 +511,8 @@ begin
       end;
       WriteLn('');
     end;
+
+    ReportPlatformBasics;
 
 {$IFDEF HASHLIB_X86}
     ReportX86(Lines, DotNetProbeOk);

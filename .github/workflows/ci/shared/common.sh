@@ -68,7 +68,7 @@ ci_openssl_hack() {
 ci_debian_container_bootstrap() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
-  apt-get install -y curl ca-certificates git build-essential openssl libssl3 "$@"
+  apt-get install -y curl ca-certificates git build-essential openssl "$@"
   OPENSSL_USE_SUDO=0 bash "$CI_ROOT/openssl-libssl11-shim-unix.sh" "${OPENSSL_ARCH_DIR:-}"
 }
 

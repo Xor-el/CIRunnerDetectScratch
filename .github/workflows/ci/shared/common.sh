@@ -51,8 +51,30 @@ ci_fpc_info_probe() {
   return 1
 }
 
-ci_verify_toolchain() {
-  local tp to
+# Prints little | big | unknown to stdout (for capture).
+ci_runtime_endian() {
+  local shared_dir probe_src tmp value="unknown"
+
+  shared_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  probe_src="${shared_dir}/runtime-endian-probe.c"
+
+  if command -v cc >/dev/null 2>&1 && [ -f "$probe_src" ]; then
+    tmp="$(mktemp)"
+    if cc -O2 -o "$tmp" "$probe_src" 2>/dev/null; then
+      value="$("$tmp" 2>/dev/null | tr -d '\r\n' || true)"
+      case "$value" in
+        little|big) ;;
+        *) value="unknown" ;;
+      esac
+    fi
+    rm -f "$tmp"
+  fi
+
+  printf '%s\n' "$value"
+}
+
+ci_preflight() {
+  local tp to endian
 
   ci_fpc_info_probe -iV
   tp="$(ci_fpc_info_probe -iTP)" || exit 1
@@ -61,6 +83,8 @@ ci_verify_toolchain() {
   if [ -n "${FPC_TARGET:-}" ]; then
     echo "::notice::FPC_TARGET=${FPC_TARGET}"
   fi
+  endian="$(ci_runtime_endian)"
+  echo "::notice::runtime endian: ${endian}"
   if command -v lazbuild >/dev/null 2>&1; then
     lazbuild --version
   fi
@@ -73,7 +97,7 @@ ci_run_make() {
 ci_build_standard() {
   ci_install_toolchain
   ci_export_toolchain_path
-  ci_verify_toolchain
+  ci_preflight
   ci_run_make
 }
 

@@ -11,6 +11,6 @@ if [ "$FREEBSD_INSTALL_MODE" = "preferred" ]; then
   ci_build_standard
 else
   export PATH="$HOME/lazarus-src:$PATH"
-  ci_verify_toolchain
+  ci_preflight
   ci_run_make
 fi

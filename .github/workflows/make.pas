@@ -1,5 +1,5 @@
 program Make;
-{$MODE DELPHI}
+{$mode objfpc}{$H+}
 {$SCOPEDENUMS ON}
 
 uses
@@ -145,16 +145,16 @@ type
   TPackageGraph = class
   private
     FRunner: TMakeRunner;
-    FItems: TObjectList<TLpkPackage>;
+    FItems: specialize TObjectList<TLpkPackage>;
     FNameToIndex: TStringList;
     function GetPackage(Index: Integer): TLpkPackage;
     function FindIndexByName(const AName: string): Integer;
     function IsBuiltinPackage(const AName: string): Boolean;
     function ResolveDepIndex(const APackageName, AContext: string): Integer;
-    procedure VisitPackageDeps(const AIndex: Integer; AVisited: TList<Integer>;
-      AKind: TDepVisitKind; AOrder: TList<Integer>; APaths: TStrings);
-    procedure CollectBuildOrder(const AIndex: Integer; AOrder: TList<Integer>);
-    procedure CollectUnitPaths(const AIndex: Integer; AVisited: TList<Integer>;
+    procedure VisitPackageDeps(const AIndex: Integer; AVisited: specialize TList<Integer>;
+      AKind: TDepVisitKind; AOrder: specialize TList<Integer>; APaths: TStrings);
+    procedure CollectBuildOrder(const AIndex: Integer; AOrder: specialize TList<Integer>);
+    procedure CollectUnitPaths(const AIndex: Integer; AVisited: specialize TList<Integer>;
       APaths: TStrings);
   public
     constructor Create(ARunner: TMakeRunner);
@@ -236,7 +236,7 @@ type
 // ---------------------------------------------------------------------------
 
 const
-  Target = 'CIRunnerDetect.Demo';
+  Target: string = 'CIRunnerDetect.Demo';
 
   CSI_Reset  = #27'[0m';
   CSI_Red    = #27'[31m';
@@ -247,11 +247,10 @@ const
   OPMBaseUrl = 'https://packages.lazarus-ide.org/';
   GitHubArchiveBaseUrl = 'https://github.com/';
 
-  Dependencies: array[0..0] of TDependency = (
+  Dependencies: array of TDependency = (
     // Examples:
-       (Kind: TDependencyKind.GitHub; Name: 'Xor-el/SimpleBaseLib4Pascal';  Ref: 'master')
-    // (Kind: TDependencyKind.OPM;    Name: 'HashLib';               Ref: ''),
-    // (Kind: TDependencyKind.GitHub; Name: 'Xor-el/SimpleBaseLib4Pascal';  Ref: 'master'),
+    // (Kind: TDependencyKind.OPM;    Name: 'SimpleBaseLib';                     Ref: ''),
+     (Kind: TDependencyKind.GitHub; Name: 'Xor-el/HashLib4Pascal'; Ref: 'master')
   );
 
 // ---------------------------------------------------------------------------
@@ -915,7 +914,7 @@ constructor TPackageGraph.Create(ARunner: TMakeRunner);
 begin
   inherited Create;
   FRunner := ARunner;
-  FItems := TObjectList<TLpkPackage>.Create(True);
+  FItems := specialize TObjectList<TLpkPackage>.Create(True);
   FNameToIndex := TStringList.Create;
   FNameToIndex.Sorted := True;
   FNameToIndex.Duplicates := dupError;
@@ -951,7 +950,7 @@ begin
   Result := -1;
   Idx := FNameToIndex.IndexOf(AName);
   if Idx >= 0 then
-    Result := Integer(FNameToIndex.Objects[Idx]);
+    Result := Integer(PtrInt(FNameToIndex.Objects[Idx]));
 end;
 
 procedure TPackageGraph.RegisterLpk(const ALpkPath: string);
@@ -980,7 +979,7 @@ begin
     Exit;
   end;
 
-  FNameToIndex.AddObject(Pkg.PackageName, TObject(FItems.Count));
+  FNameToIndex.AddObject(Pkg.PackageName, TObject(PtrInt(FItems.Count)));
   FItems.Add(Pkg);
 end;
 
@@ -1013,7 +1012,7 @@ begin
 end;
 
 procedure TPackageGraph.VisitPackageDeps(const AIndex: Integer;
-  AVisited: TList<Integer>; AKind: TDepVisitKind; AOrder: TList<Integer>;
+  AVisited: specialize TList<Integer>; AKind: TDepVisitKind; AOrder: specialize TList<Integer>;
   APaths: TStrings);
 var
   Pkg: TLpkPackage;
@@ -1061,20 +1060,20 @@ begin
 end;
 
 procedure TPackageGraph.CollectBuildOrder(const AIndex: Integer;
-  AOrder: TList<Integer>);
+  AOrder: specialize TList<Integer>);
 begin
   VisitPackageDeps(AIndex, nil, TDepVisitKind.BuildOrder, AOrder, nil);
 end;
 
 procedure TPackageGraph.CollectUnitPaths(const AIndex: Integer;
-  AVisited: TList<Integer>; APaths: TStrings);
+  AVisited: specialize TList<Integer>; APaths: TStrings);
 begin
   VisitPackageDeps(AIndex, AVisited, TDepVisitKind.UnitPaths, nil, APaths);
 end;
 
 function TPackageGraph.BuildAll: Boolean;
 var
-  Order: TList<Integer>;
+  Order: specialize TList<Integer>;
   I, Idx, J: Integer;
   Pkg: TLpkPackage;
   Args: TStringList;
@@ -1086,7 +1085,7 @@ begin
   if FItems.Count = 0 then
     Exit;
 
-  Order := TList<Integer>.Create;
+  Order := specialize TList<Integer>.Create;
   try
     for I := 0 to FItems.Count - 1 do
       CollectBuildOrder(I, Order);
@@ -1149,13 +1148,13 @@ end;
 function TPackageGraph.UnitPathsForRequired(const ANames: TStrings): TStringList;
 var
   I, Idx: Integer;
-  Visited: TList<Integer>;
+  Visited: specialize TList<Integer>;
 begin
   Result := TStringList.Create;
   if not Assigned(ANames) then
     Exit;
 
-  Visited := TList<Integer>.Create;
+  Visited := specialize TList<Integer>.Create;
   try
     for I := 0 to ANames.Count - 1 do
     begin
@@ -1585,7 +1584,7 @@ end;
 
 procedure TMakeRunner.RegisterAllPackagesLazbuild(const ASearchDir: string);
 begin
-  ForEachLpkInDir(ASearchDir, RegisterPackageLazbuild);
+  ForEachLpkInDir(ASearchDir, @RegisterPackageLazbuild);
 end;
 
 procedure TMakeRunner.InstallDependencies;
@@ -1606,13 +1605,13 @@ begin
     begin
       for I := 0 to DepDirs.Count - 1 do
         RegisterAllPackagesLazbuild(DepDirs[I]);
-      RegisterAllPackagesLazbuild(TargetDirectory);
+      RegisterAllPackagesLazbuild(RepoRoot);
     end
     else
     begin
       for I := 0 to DepDirs.Count - 1 do
         FGraph.DiscoverUnder(DepDirs[I]);
-      FGraph.DiscoverUnder(TargetDirectory);
+      FGraph.DiscoverUnder(RepoRoot);
       if FGraph.PackageCount > 0 then
         FGraph.BuildAll;
     end;

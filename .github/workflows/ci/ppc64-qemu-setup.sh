@@ -16,8 +16,8 @@ if ! ls /proc/sys/fs/binfmt_misc/qemu-ppc64* >/dev/null 2>&1; then
 fi
 
 BINFMT_FILE="$(ls /proc/sys/fs/binfmt_misc/qemu-ppc64* | head -1)"
-echo "::notice::binfmt handler $BINFMT_FILE"
-awk '{print "::notice::" $0}' "$BINFMT_FILE"
+echo "binfmt handler ${BINFMT_FILE}:"
+cat "$BINFMT_FILE"
 
 if ! grep -q 'flags:.*F' "$BINFMT_FILE"; then
   echo "::error::qemu-ppc64 binfmt flags missing F (fix-binary mode); got:" >&2

@@ -36,7 +36,7 @@ ci_fpc_info_probe() {
     value="$(fpc "$flag" 2>/dev/null | head -1 | tr -d '\r\n' || true)"
     if [ -n "$value" ]; then
       if [ "$attempt" -gt 1 ]; then
-        echo "::notice::fpc ${flag} succeeded on attempt ${attempt}/${max_attempts}" >&2
+        echo "fpc ${flag} succeeded on attempt ${attempt}/${max_attempts}" >&2
       fi
       printf '%s\n' "$value"
       return 0
@@ -51,40 +51,65 @@ ci_fpc_info_probe() {
   return 1
 }
 
+# Prints a C compiler path to stdout; returns 1 if none found.
+ci_find_c_compiler() {
+  local c
+  for c in cc gcc g++; do
+    if command -v "$c" >/dev/null 2>&1; then
+      command -v "$c"
+      return 0
+    fi
+  done
+  for c in /usr/bin/gcc /usr/sfw/bin/gcc /opt/csw/bin/gcc /usr/gcc/*/bin/gcc; do
+    if [ -x "$c" ]; then
+      printf '%s\n' "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # Prints little | big | unknown to stdout (for capture).
 ci_runtime_endian() {
-  local shared_dir probe_src tmp value="unknown"
+  local shared_dir probe_src tmp value="unknown" cc_cmd
 
   shared_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   probe_src="${shared_dir}/runtime-endian-probe.c"
 
-  if command -v cc >/dev/null 2>&1 && [ -f "$probe_src" ]; then
-    tmp="$(mktemp)"
-    if cc -O2 -o "$tmp" "$probe_src" 2>/dev/null; then
-      value="$("$tmp" 2>/dev/null | tr -d '\r\n' || true)"
-      case "$value" in
-        little|big) ;;
-        *) value="unknown" ;;
-      esac
+  cc_cmd="$(ci_find_c_compiler 2>/dev/null || true)"
+
+  if [ -n "$cc_cmd" ] && [ -f "$probe_src" ]; then
+    tmp="$(mktemp /tmp/ci-runtime-endian.XXXXXX 2>/dev/null || true)"
+    if [ -z "$tmp" ]; then
+      tmp="$(mktemp -t ci-runtime-endian 2>/dev/null || true)"
     fi
-    rm -f "$tmp"
+    if [ -n "$tmp" ]; then
+      if "$cc_cmd" -O2 -o "$tmp" "$probe_src" 2>/dev/null; then
+        value="$("$tmp" 2>/dev/null | tr -d '\r\n' || true)"
+        case "$value" in
+          little|big) ;;
+          *) value="unknown" ;;
+        esac
+      fi
+      rm -f "$tmp"
+    fi
   fi
 
   printf '%s\n' "$value"
 }
 
 ci_preflight() {
-  local tp to endian
+  local tp to endian target
 
   ci_fpc_info_probe -iV
   tp="$(ci_fpc_info_probe -iTP)" || exit 1
   to="$(ci_fpc_info_probe -iTO)" || exit 1
-  echo "::notice::fpc target: ${tp}-${to}"
-  if [ -n "${FPC_TARGET:-}" ]; then
-    echo "::notice::FPC_TARGET=${FPC_TARGET}"
-  fi
   endian="$(ci_runtime_endian)"
-  echo "::notice::runtime endian: ${endian}"
+  target="${tp}-${to}"
+  echo "preflight: target=${target} endian=${endian}"
+  if [ "$endian" = "unknown" ]; then
+    echo "::warning::runtime endian probe returned unknown (no usable C compiler or probe failed)" >&2
+  fi
   if command -v lazbuild >/dev/null 2>&1; then
     lazbuild --version
   fi

@@ -32,7 +32,8 @@
 
 set -euo pipefail
 # Opt-in command tracing (this installer is verbose); set CI_DEBUG=1 to enable.
-[ -n "${CI_DEBUG:-}" ] && set -x
+# Match only truthy values so a flat CI_DEBUG=0 (the CI default) stays quiet.
+case "${CI_DEBUG:-}" in 1|true|yes|on) set -x ;; esac
 
 INSTALL_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=ci/shared/common.sh

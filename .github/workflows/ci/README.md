@@ -27,9 +27,9 @@ Shared helpers live in [`shared/common.sh`](shared/common.sh) (e.g. `ci_default_
 
 ## PowerPC64 big-endian flow
 
-Image pins live in [`ppc64-be-images.env`](ppc64-be-images.env) (host QEMU `7.2.0-1`; runtime `urbanogilson/debian-debootstrap-ports:ppc64-forky-sid` full variant with embedded `qemu-ppc64-static`).
+The runtime rootfs is pinned by digest in [`ppc64-be-images.env`](ppc64-be-images.env) (`urbanogilson/debian-debootstrap-ports:ppc64-forky-sid`, full variant). Debian-ports ppc64 BE only exists in sid, so there is no stable release — the digest pin stops the gcc/glibc userland from silently drifting under the emulator (a frequent cause of intermittent red).
 
-1. `ppc64-qemu-setup.sh` — register `qemu-ppc64` binfmt on the Ubuntu host via pinned `multiarch/qemu-user-static:7.2.0-1` with `--reset -p yes -c yes` (OCF flags); verify `flags:` includes `F`.
+1. `ppc64-qemu-setup.sh` — register the `qemu-ppc64` binfmt handler on the Ubuntu host by installing the distro `qemu-user-static` (currently QEMU ~8.2; postinst registers with the `F` fix-binary flag); verify `flags:` includes `F`. We deliberately avoid `multiarch/qemu-user-static` (abandoned at 7.2.0) for a newer emulator.
 2. `ppc64-be-build.sh` — cross-compile glibc CSU stubs on the host (`gcc-powerpc64-linux-gnu` + [`shared/csu-stubs.c`](shared/csu-stubs.c)); `docker run` the urbanogilson full image; bind-mount stub as `CSU_STUBS_PREBUILT`.
 3. `ppc64-be-inner.sh` — Debian bootstrap, `install-fpc-lazarus.sh` with `MAKE_BUILD_BACKEND=fpc`, `ci_preflight` (`ci_fpc_info_probe` for `-iV`/`-iTP`/`-iTO`, `ci_runtime_endian`), then `make.pas` (`RunFpcInfoProbeWithRetry`). Tune via `CI_FPC_PROBE_ATTEMPTS` / `CI_FPC_PROBE_DELAY_SECS` (shell) or `CI_FPC_PROBE_DELAY_MS` (make.pas).
 

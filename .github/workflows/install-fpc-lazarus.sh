@@ -258,7 +258,10 @@ if [ -n "$FPC_UTIL_DIR" ]; then
   ci_github_path_append "$FPC_UTIL_DIR"
 fi
 
-fpc -iV
+# Probe the freshly installed compiler. Under QEMU user-mode (notably ppc64
+# big-endian) the compiler binary can SIGSEGV intermittently, so retry via
+# ci_fpc_info_probe instead of letting one emulation hiccup fail the install.
+ci_fpc_info_probe -iV
 
 # ── Build Lazarus from source (lazbuild | auto only) ─────────────────
 #

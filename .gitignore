@@ -110,5 +110,8 @@ lib/
 ### Tools ###
 tools/
 
+### Visual Studio ###
+.vs/
+
 ### .NET (CpuProbe helper) ###
 CIRunnerDetect.Demo/CpuProbe/obj/

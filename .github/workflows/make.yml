@@ -38,7 +38,7 @@ env:
   # make.pas package build scope: 'all' compiles every discovered package (catches
   # a package that fails on the target even if unused); 'required' only compiles
   # the projects' dependency closure. Override per job below, like MAKE_BUILD_BACKEND.
-  MAKE_PACKAGE_SCOPE: all
+  MAKE_PACKAGE_SCOPE: required
   # Set by the workflow_dispatch "debug" toggle; '1' enables `set -x` tracing in
   # install-fpc-lazarus.sh, '0' otherwise. Forwarded into the sandboxed jobs below.
   CI_DEBUG: ${{ github.event.inputs.debug == 'true' && '1' || '0' }}

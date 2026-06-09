@@ -132,6 +132,10 @@
   {$DEFINE HASHLIB_ARM}
 {$IFEND}
 
+{$IF DEFINED(HASHLIB_POWERPC64)}
+  {$DEFINE HASHLIB_POWERPC}
+{$IFEND}
+
 {============================ Common SIMD Settings ============================}
 
 {$IF DEFINED(HASHLIB_X86_64) AND NOT DEFINED(HASHLIB_MSWINDOWS)}

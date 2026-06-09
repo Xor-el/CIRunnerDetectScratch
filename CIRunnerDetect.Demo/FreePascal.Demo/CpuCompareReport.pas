@@ -9,7 +9,7 @@ procedure RunCpuCapabilityCompare;
 implementation
 
 uses
-  SysUtils, Classes, Process, HlpSimdLevels, HlpCpuFeatures;
+  SysUtils, Classes, Process, HlpSimdLevels, HlpCpuFeatures, HlpRuntimeEndian;
 
 const
   NetColUnavailable = '(unavailable)';
@@ -190,6 +190,20 @@ begin
   end;
 end;
 
+function PpcLevelToStr(const L: TPpcSimdLevel): string;
+begin
+  case L of
+    TPpcSimdLevel.Scalar:
+      Result := 'scalar';
+    TPpcSimdLevel.AltiVec:
+      Result := 'altivec';
+    TPpcSimdLevel.VSX:
+      Result := 'vsx';
+  else
+    Result := 'unknown';
+  end;
+end;
+
 function BoolTxt(B: Boolean): string;
 begin
   if B then
@@ -240,6 +254,40 @@ begin
   WriteLn(Format('%-24s %14s %14s %10s', [AFeature, AHash, ANet, AMatch]));
 end;
 
+procedure ReportPlatformBasics;
+var
+  RuntimeS, CompileS: string;
+begin
+  RuntimeS := TRuntimeEndian.AsString();
+  CompileS := TRuntimeEndian.CompileTimeAsString();
+  WriteLn('--- Platform ---');
+  WriteLn(Format('Runtime endian:       %s', [RuntimeS]));
+  WriteLn(Format('Compile-time endian:  %s', [CompileS]));
+  if not SameText(RuntimeS, CompileS) then
+    WriteLn('WARNING: runtime and compile-time endian differ');
+  WriteLn('');
+end;
+
+procedure RowEndian(const Lines: TStrings; const DotNetProbeOk: Boolean;
+  Mis: TStrings);
+var
+  HL, NL: string;
+begin
+  if not DotNetProbeOk then
+    Exit;
+  HL := TRuntimeEndian.AsString();
+  NL := NativeValueStr(Lines, 'ENDIAN');
+  if NL = '' then
+    NL := '(missing)';
+  if SameText(HL, NL) then
+    PrintRow('Endian', HL, NL, 'yes')
+  else
+  begin
+    PrintRow('Endian', HL, NL, 'NO');
+    Mis.Add('Endian');
+  end;
+end;
+
 procedure Summarize(const Mis: TStrings; const DotNetProbeOk: Boolean);
 var
   I: Integer;
@@ -287,6 +335,7 @@ begin
   Mis := TStringList.Create;
   try
     PrintHeader;
+    RowEndian(Lines, DotNetProbeOk, Mis);
     HL := X86LevelToStr(TCpuFeatures.X86.GetActiveSimdLevel());
     if not DotNetProbeOk then
       PrintRow('Simd level', HL, NetColUnavailable, '-')
@@ -344,6 +393,7 @@ begin
   Mis := TStringList.Create;
   try
     PrintHeader;
+    RowEndian(Lines, DotNetProbeOk, Mis);
     HL := ArmLevelToStr(TCpuFeatures.Arm.GetActiveSimdLevel());
     if not DotNetProbeOk then
       PrintRow('Simd level', HL, NetColUnavailable, '-')
@@ -371,6 +421,42 @@ begin
     RowBool('SHA3', 'SHA3', TCpuFeatures.Arm.HasSHA3());
     RowBool('CRC32', 'CRC32', TCpuFeatures.Arm.HasCRC32());
     RowBool('PMULL', 'PMULL', TCpuFeatures.Arm.HasPMULL());
+
+    Summarize(Mis, DotNetProbeOk);
+  finally
+    Mis.Free;
+  end;
+end;
+{$ENDIF}
+
+{$IFDEF HASHLIB_POWERPC}
+procedure ReportPpc(const Lines: TStrings; const DotNetProbeOk: Boolean);
+var
+  Mis: TStringList;
+  HL: string;
+
+  procedure RowBool(const Title: string; const HB: Boolean);
+  begin
+    if not DotNetProbeOk then
+      PrintRow(Title, BoolTxt(HB), NetColUnavailable, '-')
+    else
+      PrintRow(Title, BoolTxt(HB), '(unsupported)', '-');
+  end;
+
+begin
+  Mis := TStringList.Create;
+  try
+    PrintHeader;
+    RowEndian(Lines, DotNetProbeOk, Mis);
+    HL := PpcLevelToStr(TCpuFeatures.Ppc.GetActiveSimdLevel());
+    if not DotNetProbeOk then
+      PrintRow('Simd level', HL, NetColUnavailable, '-')
+    else
+      PrintRow('Simd level', HL, '(unsupported)', '-');
+
+    RowBool('AltiVec', TCpuFeatures.Ppc.HasAltiVec());
+    RowBool('VSX', TCpuFeatures.Ppc.HasVSX());
+    RowBool('PPC64', TCpuFeatures.Ppc.HasPPC64());
 
     Summarize(Mis, DotNetProbeOk);
   finally
@@ -426,13 +512,19 @@ begin
       WriteLn('');
     end;
 
+    ReportPlatformBasics;
+
 {$IFDEF HASHLIB_X86}
     ReportX86(Lines, DotNetProbeOk);
 {$ELSE}
 {$IFDEF HASHLIB_ARM}
     ReportArm(Lines, DotNetProbeOk);
 {$ELSE}
-    WriteLn('Neither HASHLIB_X86 nor HASHLIB_ARM is defined for this target.');
+{$IFDEF HASHLIB_POWERPC}
+    ReportPpc(Lines, DotNetProbeOk);
+{$ELSE}
+    WriteLn('No supported CPU architecture is defined for this target.');
+{$ENDIF}
 {$ENDIF}
 {$ENDIF}
   finally

@@ -12,6 +12,9 @@ uses
 {$IF DEFINED(HASHLIB_ARM)}
   , HlpArmSimdFeatures
 {$IFEND}
+{$IF DEFINED(HASHLIB_POWERPC)}
+  , HlpPpcSimdFeatures
+{$IFEND}
   ;
 
 type
@@ -20,6 +23,9 @@ type
 {$IFEND}
 {$IF DEFINED(HASHLIB_ARM)}
   TCpuFeaturesArm = class of TArmSimdFeatures;
+{$IFEND}
+{$IF DEFINED(HASHLIB_POWERPC)}
+  TCpuFeaturesPpc = class of TPpcSimdFeatures;
 {$IFEND}
 
   TCpuFeatures = class sealed
@@ -30,6 +36,9 @@ type
   {$IF DEFINED(HASHLIB_ARM)}
     class function GetArm(): TCpuFeaturesArm; static;
   {$IFEND}
+  {$IF DEFINED(HASHLIB_POWERPC)}
+    class function GetPpc(): TCpuFeaturesPpc; static;
+  {$IFEND}
 
   public
   {$IF DEFINED(HASHLIB_X86)}
@@ -37,6 +46,9 @@ type
   {$IFEND}
   {$IF DEFINED(HASHLIB_ARM)}
     class property Arm: TCpuFeaturesArm read GetArm;
+  {$IFEND}
+  {$IF DEFINED(HASHLIB_POWERPC)}
+    class property Ppc: TCpuFeaturesPpc read GetPpc;
   {$IFEND}
   end;
 
@@ -55,6 +67,13 @@ end;
 class function TCpuFeatures.GetArm(): TCpuFeaturesArm;
 begin
   Result := TArmSimdFeatures;
+end;
+{$IFEND}
+
+{$IF DEFINED(HASHLIB_POWERPC)}
+class function TCpuFeatures.GetPpc(): TCpuFeaturesPpc;
+begin
+  Result := TPpcSimdFeatures;
 end;
 {$IFEND}
 

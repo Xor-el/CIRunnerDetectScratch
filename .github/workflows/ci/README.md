@@ -57,13 +57,12 @@ This is a **process-level** probe in the test environment (native runner, arm32 
 
 ## Build backends
 
-`MAKE_BUILD_BACKEND` in `make.yml`:
+`MAKE_BUILD_BACKEND` in `make.yml` (default `fpc` when unset):
 
 - `fpc` — `make.pas` compiles LPI/LPK with `fpc`; installer skips Lazarus.
 - `lazbuild` — full Lazarus package registration + `lazbuild --build-all`.
-- `auto` — `make.pas` probes `lazbuild` on PATH at runtime; installer still clones Lazarus when set to `auto`.
 
-`MAKE_PACKAGE_SCOPE` (default `all`) controls how many dependency packages `make.pas` compiles, in both backends:
+`MAKE_PACKAGE_SCOPE` controls how many dependency packages `make.pas` compiles, in both backends (default `required` when unset; CI sets `all` explicitly in `make.yml`):
 
 - `all` — compile every discovered package, so a package that fails to build on the target (e.g. a big-endian `{$MESSAGE FATAL}`) is caught even when no built project references it.
 - `required` — compile only the dependency closure of the buildable projects. Faster, but a broken-but-unused package goes unnoticed.

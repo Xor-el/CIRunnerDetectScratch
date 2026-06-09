@@ -14,20 +14,19 @@ type
   // Build backend
   // ---------------------------------------------------------------------------
 
-  // Selected via MAKE_BUILD_BACKEND. Auto probes for lazbuild on PATH and
-  // falls back to Fpc. Lazbuild drives builds through the IDE tool; Fpc builds
-  // packages/projects by invoking the compiler directly (see TPackageGraph).
+  // Selected via MAKE_BUILD_BACKEND (defaults to Fpc when unset). Lazbuild
+  // drives builds through the IDE tool; Fpc builds packages/projects by
+  // invoking the compiler directly (see TPackageGraph).
   TBuildBackend = (
-    Auto,
     Lazbuild,
     Fpc
   );
 
-  // Selected via MAKE_PACKAGE_SCOPE. 'all' (default) compiles every discovered
-  // dependency package, so a package that fails to compile on the target is
-  // caught even when no built project references it; 'required' compiles only
-  // the packages the buildable projects transitively depend on. Honoured by
-  // both backends.
+  // Selected via MAKE_PACKAGE_SCOPE (defaults to Required when unset). 'all'
+  // compiles every discovered dependency package, so a package that fails to
+  // compile on the target is caught even when no built project references it;
+  // 'required' compiles only the packages the buildable projects transitively
+  // depend on. Honoured by both backends.
   TPackageScope = (
     All,
     Required
@@ -213,7 +212,6 @@ type
     FGraph: TPackageGraph;
     function ParseBackendEnv: TBuildBackend;
     function ParsePackageScopeEnv: TPackageScope;
-    function ResolveAutoBackend: TBuildBackend;
     procedure InitEnvironment;
     procedure UpdateSubmodules;
     procedure InstallDependencies;
@@ -1272,9 +1270,9 @@ end;
 constructor TMakeRunner.Create;
 begin
   inherited Create;
-  FBackend := TBuildBackend.Auto;
+  FBackend := TBuildBackend.Fpc;
   FBackendResolved := False;
-  FPackageScope := TPackageScope.All;
+  FPackageScope := TPackageScope.Required;
   FErrorCount := 0;
   // Honor the NO_COLOR convention (https://no-color.org): any value disables
   // ANSI colors. GitHub Actions renders ANSI in its log viewer, so default on.
@@ -1338,8 +1336,8 @@ var
   Env: string;
 begin
   Env := LowerCase(Trim(GetEnvironmentVariable('MAKE_BUILD_BACKEND')));
-  if (Env = '') or (Env = 'auto') then
-    Exit(TBuildBackend.Auto);
+  if Env = '' then
+    Exit(TBuildBackend.Fpc);
   if Env = 'lazbuild' then
     Exit(TBuildBackend.Lazbuild);
   if Env = 'fpc' then
@@ -1352,20 +1350,13 @@ var
   Env: string;
 begin
   Env := LowerCase(Trim(GetEnvironmentVariable('MAKE_PACKAGE_SCOPE')));
-  if (Env = '') or (Env = 'all') then
+  if Env = '' then
+    Exit(TPackageScope.Required);
+  if Env = 'all' then
     Exit(TPackageScope.All);
   if Env = 'required' then
     Exit(TPackageScope.Required);
   raise Exception.CreateFmt('unknown MAKE_PACKAGE_SCOPE: "%s"', [Env]);
-end;
-
-function TMakeRunner.ResolveAutoBackend: TBuildBackend;
-var
-  Output: string;
-begin
-  if RunCommandEx('lazbuild', ['--version'], '', False, Output) then
-    Exit(TBuildBackend.Lazbuild);
-  Result := TBuildBackend.Fpc;
 end;
 
 function TMakeRunner.UsesLazbuild: Boolean;
@@ -1558,7 +1549,6 @@ end;
 
 procedure TMakeRunner.InitEnvironment;
 var
-  Requested: TBuildBackend;
   Output: string;
 begin
   if FBackendResolved then
@@ -1569,19 +1559,10 @@ begin
   if not RunFpcInfoProbeWithRetry('-iTO', FTargetOs) then
     raise Exception.Create('fpc -iTO returned empty TargetOS');
 
-  Requested := ParseBackendEnv;
-  case Requested of
-    TBuildBackend.Lazbuild:
-      begin
-        if not RunCommandEx('lazbuild', ['--version'], '', False, Output) then
-          raise Exception.Create('MAKE_BUILD_BACKEND=lazbuild but lazbuild not found');
-        FBackend := TBuildBackend.Lazbuild;
-      end;
-    TBuildBackend.Fpc:
-      FBackend := TBuildBackend.Fpc;
-    TBuildBackend.Auto:
-      FBackend := ResolveAutoBackend;
-  end;
+  FBackend := ParseBackendEnv;
+  if (FBackend = TBuildBackend.Lazbuild)
+    and not RunCommandEx('lazbuild', ['--version'], '', False, Output) then
+    raise Exception.Create('MAKE_BUILD_BACKEND=lazbuild but lazbuild not found');
 
   FBackendResolved := True;
   case FBackend of
@@ -1589,8 +1570,6 @@ begin
       Log(CSI_Yellow, 'build backend: lazbuild');
     TBuildBackend.Fpc:
       Log(CSI_Yellow, 'build backend: fpc');
-    TBuildBackend.Auto:
-      ;
   end;
 
   FPackageScope := ParsePackageScopeEnv;

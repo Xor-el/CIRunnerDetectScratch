@@ -267,7 +267,7 @@ const
   Dependencies: array of TDependency = (
     // Examples:
     // (Kind: TDependencyKind.OPM;    Name: 'SimpleBaseLib';                     Ref: ''),
-     (Kind: TDependencyKind.GitHub; Name: 'Xor-el/HashLib4Pascal'; Ref: 'master')
+     (Kind: TDependencyKind.GitHub; Name: 'Xor-el/SimpleBaseLib4Pascal'; Ref: 'master')
   );
 
 // ---------------------------------------------------------------------------

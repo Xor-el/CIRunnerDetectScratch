@@ -36,6 +36,8 @@ docker run --rm --platform linux/ppc64 \
   -e FPC_VERSION \
   -e FPC_TARGET \
   -e MAKE_BUILD_BACKEND \
+  -e LAZARUS_BRANCH \
+  -e LAZARUS_REPO \
   -e CI_DEBUG \
   -e DEBIAN_FRONTEND=noninteractive \
   -e QEMU_CPU=power8 \

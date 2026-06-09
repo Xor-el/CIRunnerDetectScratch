@@ -34,7 +34,7 @@ env:
   FPC_VERSION: 3.2.2
   LAZARUS_BRANCH: lazarus_4_4
   LAZARUS_REPO: https://github.com/fpc/Lazarus.git
-  MAKE_BUILD_BACKEND: fpc
+  MAKE_BUILD_BACKEND: lazbuild
   # Set by the workflow_dispatch "debug" toggle; '1' enables `set -x` tracing in
   # install-fpc-lazarus.sh, '0' otherwise. Forwarded into the sandboxed jobs below.
   CI_DEBUG: ${{ github.event.inputs.debug == 'true' && '1' || '0' }}
@@ -126,7 +126,7 @@ jobs:
         env:
           FPC_VERSION: ${{ env.FPC_VERSION }}
           FPC_TARGET: powerpc64-linux
-          MAKE_BUILD_BACKEND: fpc
+          MAKE_BUILD_BACKEND: lazbuild
         run: bash .github/workflows/ci/ppc64-be-build.sh
 
   freebsd:

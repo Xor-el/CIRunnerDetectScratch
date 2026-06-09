@@ -23,6 +23,16 @@ type
     Fpc
   );
 
+  // Selected via MAKE_PACKAGE_SCOPE. 'all' (default) compiles every discovered
+  // dependency package, so a package that fails to compile on the target is
+  // caught even when no built project references it; 'required' compiles only
+  // the packages the buildable projects transitively depend on. Honoured by
+  // both backends.
+  TPackageScope = (
+    All,
+    Required
+  );
+
   // ---------------------------------------------------------------------------
   // Dependency configuration
   // ---------------------------------------------------------------------------
@@ -166,12 +176,15 @@ type
     procedure CollectBuildOrder(const AIndex: Integer; AOrder: specialize TList<Integer>);
     procedure CollectUnitPaths(const AIndex: Integer; AVisited: specialize TList<Integer>;
       APaths: TStrings);
+    function BuildPackageAt(const AIndex: Integer): Boolean;
+    function BuildOrder(AOrder: specialize TList<Integer>): Boolean;
   public
     constructor Create(ARunner: TMakeRunner);
     destructor Destroy; override;
     procedure DiscoverUnder(const ARoot: string);
     procedure RegisterLpk(const ALpkPath: string);
     function BuildAll: Boolean;
+    function BuildRequired(const ANames: TStrings): Boolean;
     function UnitPathFor(const APackageName: string): string;
     function UnitPathsForRequired(const ANames: TStrings): TStringList;
     function PackageCount: Integer;
@@ -192,16 +205,20 @@ type
   private
     FBackend: TBuildBackend;
     FBackendResolved: Boolean;
+    FPackageScope: TPackageScope;
     FTargetCpu: string;
     FTargetOs: string;
     FErrorCount: Integer;
     FUseColor: Boolean;
     FGraph: TPackageGraph;
     function ParseBackendEnv: TBuildBackend;
+    function ParsePackageScopeEnv: TPackageScope;
     function ResolveAutoBackend: TBuildBackend;
     procedure InitEnvironment;
     procedure UpdateSubmodules;
     procedure InstallDependencies;
+    procedure BuildDiscoveredPackagesFpc;
+    function CollectProjectRequiredNames: TStringList;
     procedure BuildAllProjects;
     function BuildProject(const ALpiPath: string): string;
     function BuildProjectWithLazbuild(const APath: string): string;
@@ -219,6 +236,8 @@ type
     function ResolveDependency(const ADep: TDependency): string;
     procedure RegisterPackageLazbuild(const APath: string);
     procedure RegisterAllPackagesLazbuild(const ASearchDir: string);
+    procedure BuildPackageLazbuild(const APath: string);
+    procedure BuildAllPackagesLazbuild(const ASearchDir: string);
     function UsesLazbuild: Boolean;
     function RunCommandEx(const AExecutable: string; const AArgs: TStrings;
       const AWorkingDir: string; AStreamToStderr: Boolean;
@@ -1097,64 +1116,107 @@ begin
   VisitPackageDeps(AIndex, AVisited, TDepVisitKind.UnitPaths, nil, APaths);
 end;
 
+// Compile a single discovered package by graph index. Wipes and recreates its
+// unit output dir, then invokes fpc with the package's options plus the unit
+// paths of its dependencies. Returns False (and records an error) on failure.
+function TPackageGraph.BuildPackageAt(const AIndex: Integer): Boolean;
+var
+  Pkg: TLpkPackage;
+  Args: TStringList;
+  BuildOutput, OutDir, DepPath: string;
+  J: Integer;
+begin
+  Result := True;
+  Pkg := GetPackage(AIndex);
+  OutDir := Pkg.ResolveUnitOutDir(FRunner.TargetCpu, FRunner.TargetOs);
+
+  FRunner.LogInline(CSI_Yellow, 'build package ' + Pkg.PackageName);
+  TProjectFiles.RemoveRecursive(OutDir);
+  ForceDirectories(OutDir);
+
+  Args := TStringList.Create;
+  try
+    TLazXml.AppendCompilerOptionsToArgv(Pkg.Options, Pkg.PkgDir, OutDir,
+      OutDir, FRunner.TargetCpu, FRunner.TargetOs, Args);
+    for J := 0 to Pkg.SourceDirs.Count - 1 do
+      TLazXml.AppendFuIfMissing(Pkg.SourceDirs[J], Args);
+    TLazXml.AppendFuIfMissing(Pkg.PkgDir, Args);
+    for J := 0 to Pkg.RequiredNames.Count - 1 do
+    begin
+      if IsBuiltinPackage(Pkg.RequiredNames[J]) then
+        Continue;
+      DepPath := UnitPathFor(Pkg.RequiredNames[J]);
+      TLazXml.AppendFuIfMissing(DepPath, Args);
+    end;
+    TLazXml.AppendPackageBuildArgs(Args, ExtractFileName(Pkg.StubPas), OutDir);
+
+    if FRunner.RunCommandEx('fpc', Args, Pkg.PkgDir, True, BuildOutput) then
+      FRunner.Log(CSI_Green, ' -> ' + OutDir)
+    else
+    begin
+      FRunner.IncError;
+      FRunner.ReportBuildErrors(BuildOutput);
+      Result := False;
+    end;
+  finally
+    Args.Free;
+  end;
+end;
+
+// Compile the packages in AOrder (already topologically sorted, dependencies
+// first). Builds every entry even when one fails, accumulating errors, and
+// returns False if any package failed.
+function TPackageGraph.BuildOrder(AOrder: specialize TList<Integer>): Boolean;
+var
+  I: Integer;
+begin
+  Result := True;
+  for I := 0 to AOrder.Count - 1 do
+    if not BuildPackageAt(AOrder[I]) then
+      Result := False;
+end;
+
+// MAKE_PACKAGE_SCOPE=all: compile every discovered package, in build order.
 function TPackageGraph.BuildAll: Boolean;
 var
   Order: specialize TList<Integer>;
-  I, Idx, J: Integer;
-  Pkg: TLpkPackage;
-  Args: TStringList;
-  BuildOutput: string;
-  OutDir: string;
-  DepPath: string;
+  I: Integer;
 begin
-  Result := True;
   if FItems.Count = 0 then
-    Exit;
+    Exit(True);
 
   Order := specialize TList<Integer>.Create;
   try
     for I := 0 to FItems.Count - 1 do
       CollectBuildOrder(I, Order);
+    Result := BuildOrder(Order);
+  finally
+    Order.Free;
+  end;
+end;
 
-    for I := 0 to Order.Count - 1 do
+// MAKE_PACKAGE_SCOPE=required: compile only the dependency closure of ANames,
+// in build order. Unknown names are ignored here; the project build reports
+// them via UnitPathsForRequired.
+function TPackageGraph.BuildRequired(const ANames: TStrings): Boolean;
+var
+  Order: specialize TList<Integer>;
+  I, Idx: Integer;
+begin
+  if (ANames = nil) or (ANames.Count = 0) or (FItems.Count = 0) then
+    Exit(True);
+
+  Order := specialize TList<Integer>.Create;
+  try
+    for I := 0 to ANames.Count - 1 do
     begin
-      Idx := Order[I];
-      Pkg := GetPackage(Idx);
-
-      OutDir := Pkg.ResolveUnitOutDir(FRunner.TargetCpu, FRunner.TargetOs);
-
-      FRunner.LogInline(CSI_Yellow, 'build package ' + Pkg.PackageName);
-      TProjectFiles.RemoveRecursive(OutDir);
-      ForceDirectories(OutDir);
-
-      Args := TStringList.Create;
-      try
-        TLazXml.AppendCompilerOptionsToArgv(Pkg.Options, Pkg.PkgDir, OutDir,
-          OutDir, FRunner.TargetCpu, FRunner.TargetOs, Args);
-        for J := 0 to Pkg.SourceDirs.Count - 1 do
-          TLazXml.AppendFuIfMissing(Pkg.SourceDirs[J], Args);
-        TLazXml.AppendFuIfMissing(Pkg.PkgDir, Args);
-        for J := 0 to Pkg.RequiredNames.Count - 1 do
-        begin
-          if IsBuiltinPackage(Pkg.RequiredNames[J]) then
-            Continue;
-          DepPath := UnitPathFor(Pkg.RequiredNames[J]);
-          TLazXml.AppendFuIfMissing(DepPath, Args);
-        end;
-        TLazXml.AppendPackageBuildArgs(Args, ExtractFileName(Pkg.StubPas), OutDir);
-
-        if FRunner.RunCommandEx('fpc', Args, Pkg.PkgDir, True, BuildOutput) then
-          FRunner.Log(CSI_Green, ' -> ' + OutDir)
-        else
-        begin
-          FRunner.IncError;
-          FRunner.ReportBuildErrors(BuildOutput);
-          Result := False;
-        end;
-      finally
-        Args.Free;
-      end;
+      if IsBuiltinPackage(ANames[I]) then
+        Continue;
+      Idx := FindIndexByName(ANames[I]);
+      if Idx >= 0 then
+        CollectBuildOrder(Idx, Order);
     end;
+    Result := BuildOrder(Order);
   finally
     Order.Free;
   end;
@@ -1212,6 +1274,7 @@ begin
   inherited Create;
   FBackend := TBuildBackend.Auto;
   FBackendResolved := False;
+  FPackageScope := TPackageScope.All;
   FErrorCount := 0;
   // Honor the NO_COLOR convention (https://no-color.org): any value disables
   // ANSI colors. GitHub Actions renders ANSI in its log viewer, so default on.
@@ -1282,6 +1345,18 @@ begin
   if Env = 'fpc' then
     Exit(TBuildBackend.Fpc);
   raise Exception.CreateFmt('unknown MAKE_BUILD_BACKEND: "%s"', [Env]);
+end;
+
+function TMakeRunner.ParsePackageScopeEnv: TPackageScope;
+var
+  Env: string;
+begin
+  Env := LowerCase(Trim(GetEnvironmentVariable('MAKE_PACKAGE_SCOPE')));
+  if (Env = '') or (Env = 'all') then
+    Exit(TPackageScope.All);
+  if Env = 'required' then
+    Exit(TPackageScope.Required);
+  raise Exception.CreateFmt('unknown MAKE_PACKAGE_SCOPE: "%s"', [Env]);
 end;
 
 function TMakeRunner.ResolveAutoBackend: TBuildBackend;
@@ -1517,6 +1592,14 @@ begin
     TBuildBackend.Auto:
       ;
   end;
+
+  FPackageScope := ParsePackageScopeEnv;
+  case FPackageScope of
+    TPackageScope.All:
+      Log(CSI_Yellow, 'package scope: all');
+    TPackageScope.Required:
+      Log(CSI_Yellow, 'package scope: required');
+  end;
 end;
 
 procedure TMakeRunner.UpdateSubmodules;
@@ -1653,36 +1736,124 @@ begin
   ForEachLpkInDir(ASearchDir, @RegisterPackageLazbuild);
 end;
 
+procedure TMakeRunner.BuildPackageLazbuild(const APath: string);
+var
+  BuildOutput: string;
+begin
+  // Parity with the fpc backend's TPackageGraph.BuildAll: --add-package-link only
+  // registers a package; it never compiles it, so a dependency that fails to
+  // compile on this target goes unnoticed unless a built project happens to use
+  // it. Compile every registered package explicitly to catch that.
+  // Uses the non-logging skip so LCL packages are not re-announced (registration
+  // already logged them).
+  if TPackageGraph.ShouldSkipLpk(APath) then
+    Exit;
+  LogInline(CSI_Yellow, 'build package ' + APath);
+  if RunCommandEx('lazbuild', ['--build-all', '--recursive', APath], '', True,
+    BuildOutput) then
+    Log(CSI_Green, ' -> ok')
+  else
+  begin
+    WriteLn(stderr, BuildOutput);
+    IncError;
+    ReportBuildErrors(BuildOutput);
+  end;
+end;
+
+procedure TMakeRunner.BuildAllPackagesLazbuild(const ASearchDir: string);
+begin
+  ForEachLpkInDir(ASearchDir, @BuildPackageLazbuild);
+end;
+
 procedure TMakeRunner.InstallDependencies;
 var
-  DepDirs: TStringList;
+  Roots: TStringList;
   I: Integer;
 begin
-  DepDirs := TStringList.Create;
+  // Search roots = each resolved dependency directory plus the repo itself.
+  Roots := TStringList.Create;
   try
     if Length(Dependencies) > 0 then
     begin
       InitSslForDownloads;
       for I := 0 to High(Dependencies) do
-        DepDirs.Add(ResolveDependency(Dependencies[I]));
+        Roots.Add(ResolveDependency(Dependencies[I]));
     end;
+    Roots.Add(RepoRoot);
 
     if UsesLazbuild then
     begin
-      for I := 0 to DepDirs.Count - 1 do
-        RegisterAllPackagesLazbuild(DepDirs[I]);
-      RegisterAllPackagesLazbuild(RepoRoot);
+      // Register every package first so cross-package dependencies resolve.
+      for I := 0 to Roots.Count - 1 do
+        RegisterAllPackagesLazbuild(Roots[I]);
+      // Scope=all: also compile each registered package so a package that fails
+      // to build on this target is caught even when no project uses it (parity
+      // with the fpc backend — see BuildPackageLazbuild). Scope=required:
+      // lazbuild compiles the packages a project needs while building it.
+      if FPackageScope = TPackageScope.All then
+        for I := 0 to Roots.Count - 1 do
+          BuildAllPackagesLazbuild(Roots[I]);
     end
     else
     begin
-      for I := 0 to DepDirs.Count - 1 do
-        FGraph.DiscoverUnder(DepDirs[I]);
-      FGraph.DiscoverUnder(RepoRoot);
+      for I := 0 to Roots.Count - 1 do
+        FGraph.DiscoverUnder(Roots[I]);
       if FGraph.PackageCount > 0 then
-        FGraph.BuildAll;
+        BuildDiscoveredPackagesFpc;
     end;
   finally
-    DepDirs.Free;
+    Roots.Free;
+  end;
+end;
+
+// fpc backend: compile discovered packages according to MAKE_PACKAGE_SCOPE.
+procedure TMakeRunner.BuildDiscoveredPackagesFpc;
+var
+  Names: TStringList;
+begin
+  if FPackageScope = TPackageScope.All then
+    FGraph.BuildAll
+  else
+  begin
+    Names := CollectProjectRequiredNames;
+    try
+      FGraph.BuildRequired(Names);
+    finally
+      Names.Free;
+    end;
+  end;
+end;
+
+// Union of RequiredPackages across the buildable (non-GUI) projects under the
+// target directory. Drives the fpc backend's 'required' scope so it compiles
+// only the dependency closure those projects need.
+function TMakeRunner.CollectProjectRequiredNames: TStringList;
+var
+  List: TStringList;
+  Each: string;
+  Proj: TLpiProject;
+  I: Integer;
+begin
+  Result := TStringList.Create;
+  Result.Sorted := True;
+  Result.Duplicates := dupIgnore;
+  List := TProjectFiles.FindAll(TargetDirectory, '*.lpi');
+  try
+    for Each in List do
+    begin
+      if IsGUIProject(Each) then
+        Continue;
+      Proj := TLpiProject.CreateFromFile(Each, FTargetCpu, FTargetOs);
+      try
+        if Proj.IsValid then
+          for I := 0 to Proj.RequiredPackageNames.Count - 1 do
+            Result.Add(Proj.RequiredPackageNames[I]);
+      finally
+        Proj.Free;
+      end;
+    end;
+  finally
+    List.Free;
   end;
 end;
 

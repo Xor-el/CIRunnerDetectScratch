@@ -63,6 +63,11 @@ This is a **process-level** probe in the test environment (native runner, arm32 
 - `lazbuild` — full Lazarus package registration + `lazbuild --build-all`.
 - `auto` — `make.pas` probes `lazbuild` on PATH at runtime; installer still clones Lazarus when set to `auto`.
 
+`MAKE_PACKAGE_SCOPE` (default `all`) controls how many dependency packages `make.pas` compiles, in both backends:
+
+- `all` — compile every discovered package, so a package that fails to build on the target (e.g. a big-endian `{$MESSAGE FATAL}`) is caught even when no built project references it.
+- `required` — compile only the dependency closure of the buildable projects. Faster, but a broken-but-unused package goes unnoticed.
+
 ## Logging & debugging
 
 - `CI_DEBUG=1` enables `set -x` tracing in [`../install-fpc-lazarus.sh`](../install-fpc-lazarus.sh) (otherwise quiet, like the other scripts). Toggle it for a run via the `debug` checkbox on the workflow_dispatch "Run workflow" form — `make.yml` sets `CI_DEBUG` from it and forwards it into the QEMU/VM jobs. To trace locally, run the script with `CI_DEBUG=1`.

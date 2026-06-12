@@ -17,8 +17,11 @@ pkg install -y bash curl git gmake openssl
 # Resolution of the package/source mirrors intermittently fails inside the VM,
 # so pre-resolve them with drill and pin the result in /etc/hosts. Best-effort:
 # a lookup miss leaves the host unpinned rather than failing the job.
+# Pick the first A record's address ($4=="A"): hosts like packages.lazarus-ide.org
+# answer with a CNAME chain, so matching on the queried name would pin the CNAME
+# target (a hostname) instead of an IP. The A line's owner name is irrelevant.
 for h in github.com packages.lazarus-ide.org downloads.freepascal.org; do
-  ip=$(drill "$h" 2>/dev/null | awk '/^'"$h"'/{print $5; exit}')
+  ip=$(drill "$h" 2>/dev/null | awk '$4=="A"{print $5; exit}')
   if [ -n "$ip" ]; then
     echo "$ip $h" >> /etc/hosts
   fi

@@ -152,7 +152,18 @@ ci_preflight() {
 }
 
 ci_run_make() {
-  instantfpc "$WORKFLOWS_DIR/make.pas"
+  if command -v instantfpc >/dev/null 2>&1; then
+    instantfpc "$WORKFLOWS_DIR/make.pas"
+    return
+  fi
+  # Some FPC tarballs (notably the reduced x86_64-dragonfly cross build) ship
+  # fpc but omit the instantfpc helper. instantfpc just compiles+runs a .pas
+  # program, so do that directly with fpc instead. -FE/-FU keep build artifacts
+  # in a temp dir; fpc reads the same fpc.cfg, so units resolve identically.
+  local build_dir
+  build_dir="$(mktemp -d 2>/dev/null || mktemp -d -t ci-make)"
+  fpc -FE"$build_dir" -FU"$build_dir" -omake "$WORKFLOWS_DIR/make.pas"
+  "$build_dir/make"
 }
 
 ci_build_standard() {

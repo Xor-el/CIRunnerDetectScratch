@@ -181,6 +181,10 @@ ci_build_prebuilt() {
 }
 
 ci_openssl_hack() {
+  if ci_is_windows; then
+    bash "$CI_ROOT/openssl-libssl11-shim-windows.sh"
+    return
+  fi
   case "$(uname -s)" in
     Linux)     bash "$CI_ROOT/openssl-libssl11-shim-unix.sh" ;;
     Darwin)    bash "$CI_ROOT/openssl-libssl11-shim-macos.sh" ;;

@@ -1594,22 +1594,8 @@ begin
     Log(CSI_Yellow, Trim(CommandOutput));
 end;
 
-// TODO(FPC 3.2.4): drop this Windows override. FPC 3.2.2's openssl unit
-// hardcodes the OpenSSL 1.1 DLL names (libssl-1_1*.dll / libeay32.dll), but
-// modern Windows CI runners ship only OpenSSL 3.x. Point FPC at the 3.x DLLs
-// so HTTPS downloads work. FPC 3.2.4+ already knows the OpenSSL 3 names, so
-// this whole procedure can become a plain InitSSLInterface call then.
 procedure TMakeRunner.InitSslForDownloads;
 begin
-  {$IFDEF MSWINDOWS}
-    {$IFDEF WIN64}
-  DLLSSLName := 'libssl-3-x64.dll';
-  DLLUtilName := 'libcrypto-3-x64.dll';
-    {$ELSE}
-  DLLSSLName := 'libssl-3.dll';
-  DLLUtilName := 'libcrypto-3.dll';
-    {$ENDIF}
-  {$ENDIF}
   InitSSLInterface;
 end;
 

@@ -41,9 +41,9 @@ FPC 3.2.2 links against OpenSSL 1.1 sonames. On systems with OpenSSL 3 only:
 
 - [`openssl-libssl11-shim-unix.sh`](openssl-libssl11-shim-unix.sh) — ELF `.so` symlinks (Linux, Debian containers, DragonFly).
 - [`openssl-libssl11-shim-macos.sh`](openssl-libssl11-shim-macos.sh) — Homebrew `.dylib` symlinks on macOS.
-- Windows — `make.pas` uses OpenSSL 3 DLL names on CI; optional bundled `libssl-1_1.dll` / `libcrypto-1_1.dll` next to [`make.pas`](../make.pas) for local Win32 testing.
+- [`openssl-libssl11-shim-windows.sh`](openssl-libssl11-shim-windows.sh) — copies the runner's OpenSSL 3 DLLs (`libssl-3-x64.dll` / `libcrypto-3-x64.dll`, already on `PATH`) to the `-1_1-x64.dll` names FPC 3.2.2 expects. Optional bundled `libssl-1_1.dll` / `libcrypto-1_1.dll` next to [`make.pas`](../make.pas) cover local Win32 testing.
 
-Called via `ci_openssl_hack` (native Unix/macOS) or `ci_debian_container_bootstrap` (arm32/ppc64 inner).
+Called via `ci_openssl_hack` (native Windows/Unix/macOS) or `ci_debian_container_bootstrap` (arm32/ppc64 inner).
 
 ## Endian reporting
 

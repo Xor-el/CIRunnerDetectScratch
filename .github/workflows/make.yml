@@ -204,7 +204,12 @@ jobs:
           envs: FPC_VERSION LAZARUS_BRANCH LAZARUS_REPO MAKE_BUILD_BACKEND MAKE_PACKAGE_SCOPE FPC_TARGET LD_LIBRARY_PATH_EXTRA CI_DEBUG
           usesh: true
           prepare: sh .github/workflows/ci/vm-dragonfly-prepare.sh
-          run: bash .github/workflows/ci/vm-run-shared.sh
+          # TEMP(dragonfly-diagnostics): capture DNS/TCP/TLS/OpenSSL state before
+          # the build, which still runs and reproduces the real error. Revert the
+          # run: to the single vm-run-shared.sh line once the cause is confirmed.
+          run: |
+            bash .github/workflows/ci/vm-dragonfly-diagnose.sh || true
+            bash .github/workflows/ci/vm-run-shared.sh
 
   solaris:
     name: "VM: Solaris x86_64"

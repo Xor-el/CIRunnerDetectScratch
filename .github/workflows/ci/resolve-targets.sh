@@ -57,7 +57,7 @@ NATIVE_MATRIX="$(jq -c --arg ids "$TARGETS" \
 # for a job skipped via an empty matrix. A single placeholder keeps the matrix
 # valid; the native job no-ops it via `matrix.fpc_target != 'none'`.
 if [ "$NATIVE_MATRIX" = "[]" ]; then
-  NATIVE_MATRIX='[{"name":"Native (no targets selected)","runner":"ubuntu-latest","fpc_target":"none"}]'
+  NATIVE_MATRIX='[{"name":"Native: (no targets selected)","runner":"ubuntu-latest","fpc_target":"none"}]'
 fi
 
 {

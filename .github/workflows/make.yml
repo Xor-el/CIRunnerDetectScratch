@@ -90,7 +90,7 @@ jobs:
         run: bash .github/workflows/ci/native-build.sh
 
   linux-arm32:
-    name: Linux ARMv7 (QEMU)
+    name: "QEMU: Linux ARMv7"
     runs-on: ubuntu-latest
     timeout-minutes: 120
     needs: setup
@@ -117,7 +117,7 @@ jobs:
           run: bash .github/workflows/ci/arm32-run.sh
 
   linux-powerpc64-be:
-    name: Linux PowerPC64 BE (QEMU)
+    name: "QEMU: Linux PowerPC64 BE"
     runs-on: ubuntu-latest
     timeout-minutes: 180
     needs: setup
@@ -140,7 +140,7 @@ jobs:
         run: bash .github/workflows/ci/ppc64-be-build.sh
 
   freebsd:
-    name: FreeBSD x86_64
+    name: "VM: FreeBSD x86_64"
     runs-on: ubuntu-latest
     timeout-minutes: 120
     needs: setup
@@ -164,7 +164,7 @@ jobs:
           run: bash .github/workflows/ci/vm-freebsd-run.sh
 
   netbsd:
-    name: NetBSD x86_64
+    name: "VM: NetBSD x86_64"
     runs-on: ubuntu-latest
     timeout-minutes: 120
     needs: setup
@@ -185,7 +185,7 @@ jobs:
           run: bash .github/workflows/ci/vm-run-shared.sh
 
   dragonflybsd:
-    name: DragonFlyBSD x86_64
+    name: "VM: DragonFlyBSD x86_64"
     runs-on: ubuntu-latest
     timeout-minutes: 120
     needs: setup
@@ -208,7 +208,7 @@ jobs:
           run: bash .github/workflows/ci/vm-run-shared.sh
 
   solaris:
-    name: Solaris x86_64
+    name: "VM: Solaris x86_64"
     runs-on: ubuntu-latest
     timeout-minutes: 120
     needs: setup

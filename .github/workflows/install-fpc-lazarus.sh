@@ -78,10 +78,9 @@ WORK_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t fpc-install)"
 cd "$WORK_DIR"
 
 echo "Downloading $URL"
-# curl is on every platform we target; wget isn't (macOS notably).
-# Retry to ride out transient mirror hiccups.
-curl -fL --retry 5 --retry-delay 5 --retry-all-errors \
-  -o "$TARBALL" "$URL"
+# Prefer curl (Linux/macOS/Windows); fall back to wget, then the BSD base
+# `fetch`. Retries ride out transient mirror hiccups.
+ci_download "$URL" "$TARBALL"
 
 tar xf "$TARBALL"
 

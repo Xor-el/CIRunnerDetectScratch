@@ -29,6 +29,23 @@ ci_default_make_cmd() {
   esac
 }
 
+# Download $1 (URL) to $2 (output path) with whatever fetcher exists.
+# curl covers Linux/macOS/Windows; fetch is the FreeBSD/DragonFly base tool
+# (survives pkg upgrades that drop the curl package); wget is the middle option.
+ci_download() {
+  local url="$1" out="$2"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fL --retry 5 --retry-delay 5 --retry-all-errors -o "$out" "$url"
+  elif command -v wget >/dev/null 2>&1; then
+    wget --tries=5 --retry-connrefused -O "$out" "$url"
+  elif command -v fetch >/dev/null 2>&1; then
+    fetch -a -o "$out" "$url"
+  else
+    echo "ci_download: no curl/wget/fetch available" >&2
+    return 1
+  fi
+}
+
 ci_install_toolchain() {
   : "${FPC_TARGET:?FPC_TARGET is required}"
   bash "$WORKFLOWS_DIR/install-fpc-lazarus.sh"

@@ -5,6 +5,12 @@ set -eu
 # common.sh (which targets bash, e.g. BASH_SOURCE / set -o pipefail).
 CI_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
+# Reconcile the cached image with the current Avalon repo first: a single mixed
+# install+upgrade+conflict transaction on a stale image makes pkg's SAT solver
+# drop packages (curl, git-lite) instead of upgrading them. Upgrading first keeps
+# installing full git + curl a small, resolvable step.
+pkg update -f
+pkg upgrade -y
 pkg install -y bash curl git gmake openssl
 
 # TODO(dragonfly-dns): remove once the DragonFlyBSD VM image has reliable DNS.

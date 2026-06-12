@@ -64,8 +64,10 @@ jobs:
   native:
     needs: setup
     # native_matrix is built from targets.json filtered to enabled native ids.
-    # An empty array would be an invalid matrix, so skip the job in that case.
-    if: needs.setup.outputs.native_matrix != '[]'
+    # When no native target is enabled, resolve-targets.sh emits a single
+    # placeholder entry (fpc_target=none) so the matrix is never empty: a job
+    # skipped via an empty matrix renders the literal `${{ matrix.name }}` in
+    # the UI. The placeholder's steps no-op via `matrix.fpc_target != 'none'`.
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
@@ -75,11 +77,13 @@ jobs:
         include: ${{ fromJSON(needs.setup.outputs.native_matrix) }}
     steps:
       - name: Checkout
+        if: matrix.fpc_target != 'none'
         uses: actions/checkout@v6
         with:
           submodules: true
 
       - name: Build
+        if: matrix.fpc_target != 'none'
         shell: bash
         env:
           FPC_TARGET: ${{ matrix.fpc_target }}

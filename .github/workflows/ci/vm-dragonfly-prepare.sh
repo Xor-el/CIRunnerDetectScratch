@@ -5,12 +5,15 @@ set -eu
 # common.sh (which targets bash, e.g. BASH_SOURCE / set -o pipefail).
 CI_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
-# Refresh the catalogue (this also pulls a newer pkg if the cached image ships an
-# old one). Deliberately NO blanket `pkg upgrade`: on this stale image pkg 2.x's
-# SAT solver can't reconcile all ~43 upgrade candidates and "resolves" the
-# conflict by DROPPING packages we need — curl, git-lite and friends get removed
-# and never reinstalled (observed in CI). Instead install each build dependency
-# in its own small transaction the solver can actually satisfy.
+# Refresh the package catalogue (and bootstrap a newer pkg if the cached image
+# ships an old one).
+#
+# We deliberately do NOT run a blanket `pkg upgrade`. The cached VM image is
+# stale enough that pkg 2.x's SAT solver can't reconcile the full set of upgrade
+# candidates; instead of failing, it "resolves" the conflict by DROPPING
+# packages we rely on (curl, git-lite, and friends), which are then never
+# reinstalled — observed breaking CI. Installing each build dependency below in
+# its own small transaction keeps every solver decision trivially satisfiable.
 pkg update -f
 
 # bash is mandatory: the VM 'run' step is `bash ...`. Keep it strict.

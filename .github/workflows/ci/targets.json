@@ -11,6 +11,6 @@
     { "id": "freebsd",            "name": "VM: FreeBSD x86_64",                    "kind": "vm",     "default": true },
     { "id": "solaris",            "name": "VM: Solaris x86_64",                    "kind": "vm",     "default": true },
     { "id": "netbsd",             "name": "VM: NetBSD x86_64",                     "kind": "vm",     "default": true },
-    { "id": "dragonflybsd",       "name": "VM: DragonFlyBSD x86_64",               "kind": "vm",     "default": true }
+    { "id": "dragonflybsd",       "name": "VM: DragonFlyBSD x86_64",               "kind": "vm",     "default": false }
   ]
 }

@@ -11,7 +11,7 @@ set -euo pipefail
 #                    native job's strategy.matrix.include (empty => job skipped).
 #   target_map       JSON object (id -> full target entry) over the WHOLE
 #                    registry; the static qemu/vm jobs in make.yml look up their
-#                    name/runner/fpc_target by id (independent of which are enabled).
+#                    runner/fpc_target by id (independent of which are enabled).
 #
 # targets.json is the single source of truth. Opt-in targets (default=false,
 # e.g. netbsd, dragonflybsd) are excluded from the default and must be named
@@ -64,8 +64,10 @@ if [ "$NATIVE_MATRIX" = "[]" ]; then
 fi
 
 # id -> full target entry, over the entire registry (not just enabled ids). The
-# static qemu/vm jobs look up their name/runner/fpc_target by id, so the map must
-# resolve even for a target gated off by its `if:` (avoids a null name/runs-on).
+# static qemu/vm jobs look up their runner/fpc_target by id, so the map must
+# resolve even for a target gated off by its `if:` (avoids a null runs-on). Job
+# names stay literal in make.yml: an if-skipped job renders an unevaluated name
+# expression in the UI, so it cannot be sourced from here.
 TARGET_MAP="$(jq -c '.targets | map({(.id): .}) | add' "$REGISTRY")"
 
 {

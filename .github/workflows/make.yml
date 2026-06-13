@@ -90,7 +90,7 @@ jobs:
         run: bash .github/workflows/ci/native-build.sh
 
   linux-arm32:
-    name: ${{ fromJSON(needs.setup.outputs.target_map)['linux-arm32'].name }}
+    name: "QEMU: Linux ARMv7"
     runs-on: ${{ fromJSON(needs.setup.outputs.target_map)['linux-arm32'].runner }}
     timeout-minutes: 120
     needs: setup
@@ -117,7 +117,7 @@ jobs:
           run: bash .github/workflows/ci/arm32-run.sh
 
   linux-powerpc64-be:
-    name: ${{ fromJSON(needs.setup.outputs.target_map)['linux-powerpc64-be'].name }}
+    name: "QEMU: Linux PowerPC64 BE"
     runs-on: ${{ fromJSON(needs.setup.outputs.target_map)['linux-powerpc64-be'].runner }}
     timeout-minutes: 180
     needs: setup
@@ -140,7 +140,7 @@ jobs:
         run: bash .github/workflows/ci/ppc64-be-build.sh
 
   freebsd:
-    name: ${{ fromJSON(needs.setup.outputs.target_map)['freebsd'].name }}
+    name: "VM: FreeBSD x86_64"
     runs-on: ${{ fromJSON(needs.setup.outputs.target_map)['freebsd'].runner }}
     timeout-minutes: 120
     needs: setup
@@ -164,7 +164,7 @@ jobs:
           run: bash .github/workflows/ci/vm-freebsd-run.sh
 
   netbsd:
-    name: ${{ fromJSON(needs.setup.outputs.target_map)['netbsd'].name }}
+    name: "VM: NetBSD x86_64"
     runs-on: ${{ fromJSON(needs.setup.outputs.target_map)['netbsd'].runner }}
     timeout-minutes: 120
     needs: setup
@@ -185,7 +185,7 @@ jobs:
           run: bash .github/workflows/ci/vm-run-shared.sh
 
   dragonflybsd:
-    name: ${{ fromJSON(needs.setup.outputs.target_map)['dragonflybsd'].name }}
+    name: "VM: DragonFlyBSD x86_64"
     runs-on: ${{ fromJSON(needs.setup.outputs.target_map)['dragonflybsd'].runner }}
     timeout-minutes: 120
     needs: setup
@@ -208,7 +208,7 @@ jobs:
           run: bash .github/workflows/ci/vm-run-shared.sh
 
   solaris:
-    name: ${{ fromJSON(needs.setup.outputs.target_map)['solaris'].name }}
+    name: "VM: Solaris x86_64"
     runs-on: ${{ fromJSON(needs.setup.outputs.target_map)['solaris'].runner }}
     timeout-minutes: 120
     needs: setup

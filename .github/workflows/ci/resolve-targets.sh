@@ -8,7 +8,13 @@ set -euo pipefail
 # Outputs (GITHUB_OUTPUT):
 #   enabled_targets  CSV of selected ids; gates the qemu/vm jobs in make.yml.
 #   native_matrix    JSON array of enabled kind=native entries; consumed as the
-#                    native job's strategy.matrix.include (empty => job skipped).
+#                    native job's strategy.matrix.include. Never empty: when no
+#                    native target is enabled it carries a single placeholder
+#                    entry (fpc_target=none) that only binds the display name.
+#   has_native       'true' when at least one real native target is enabled,
+#                    'false' when native_matrix holds only the placeholder; the
+#                    native job's if: uses this to skip (grey) instead of running
+#                    a green no-op.
 #   target_map       JSON object (id -> full target entry) over the WHOLE
 #                    registry; the static qemu/vm jobs in make.yml look up their
 #                    runner/fpc_target by id (independent of which are enabled).
@@ -58,9 +64,15 @@ NATIVE_MATRIX="$(jq -c --arg ids "$TARGETS" \
 
 # Never emit an empty matrix: GitHub renders the literal `${{ matrix.name }}`
 # for a job skipped via an empty matrix. A single placeholder keeps the matrix
-# valid; the native job no-ops it via `matrix.fpc_target != 'none'`.
+# valid and binds a friendly display name. has_native then lets the native job's
+# if: skip the placeholder instance (grey) rather than run a green no-op; because
+# `${{ matrix.name }}` resolves at planning time, the skipped row still shows the
+# friendly name.
 if [ "$NATIVE_MATRIX" = "[]" ]; then
+  HAS_NATIVE=false
   NATIVE_MATRIX='[{"name":"Native: (no targets selected)","runner":"ubuntu-latest","fpc_target":"none"}]'
+else
+  HAS_NATIVE=true
 fi
 
 # id -> full target entry, over the entire registry (not just enabled ids). The
@@ -73,9 +85,11 @@ TARGET_MAP="$(jq -c '.targets | map({(.id): .}) | add' "$REGISTRY")"
 {
   echo "enabled_targets=${TARGETS}"
   echo "native_matrix=${NATIVE_MATRIX}"
+  echo "has_native=${HAS_NATIVE}"
   echo "target_map=${TARGET_MAP}"
 } >> "${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"
 
 echo "Enabled targets (${SOURCE}): ${TARGETS}"
 echo "Native matrix: ${NATIVE_MATRIX}"
+echo "Has native: ${HAS_NATIVE}"
 echo "Target map: ${TARGET_MAP}"

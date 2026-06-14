@@ -50,7 +50,6 @@ jobs:
     outputs:
       enabled_targets: ${{ steps.resolve.outputs.enabled_targets }}
       native_matrix: ${{ steps.resolve.outputs.native_matrix }}
-      has_native: ${{ steps.resolve.outputs.has_native }}
       target_map: ${{ steps.resolve.outputs.target_map }}
     steps:
       - uses: actions/checkout@v6
@@ -64,13 +63,11 @@ jobs:
 
   native:
     needs: setup
-    # native_matrix is built from targets.json filtered to enabled native ids and
-    # is never empty: when no native target is enabled it carries a single
-    # placeholder entry that only binds a friendly `${{ matrix.name }}`. The
-    # has_native gate then skips that placeholder instance, so the row shows grey
-    # (skipped) rather than running a green no-op. Because `${{ matrix.name }}`
-    # resolves at planning time, the skipped row still displays the friendly name.
-    if: ${{ needs.setup.outputs.has_native == 'true' }}
+    # native_matrix is built from targets.json filtered to enabled native ids.
+    # When no native target is enabled, resolve-targets.sh emits a single
+    # placeholder entry (fpc_target=none) so the matrix is never empty: a job
+    # skipped via an empty matrix renders the literal `${{ matrix.name }}` in
+    # the UI. The placeholder's steps no-op via `matrix.fpc_target != 'none'`.
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
@@ -80,11 +77,13 @@ jobs:
         include: ${{ fromJSON(needs.setup.outputs.native_matrix) }}
     steps:
       - name: Checkout
+        if: matrix.fpc_target != 'none'
         uses: actions/checkout@v6
         with:
           submodules: true
 
       - name: Build
+        if: matrix.fpc_target != 'none'
         shell: bash
         env:
           FPC_TARGET: ${{ matrix.fpc_target }}

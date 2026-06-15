@@ -4,7 +4,7 @@
 
 | Job | Script | Flow |
 |-----|--------|------|
-| native (5 runners) | `native-build.sh` | `ci_openssl_hack` → `ci_build_standard` |
+| linux-x64 / linux-arm64 / windows-x64 / macos-arm64 / macos-x64 | `native-build.sh` | `ci_openssl_hack` → `ci_build_standard` |
 | linux-arm32 | `arm32-run.sh` → `arm32-install.sh` | Debian bootstrap + `ci_build_standard` |
 | linux-powerpc64-be | `ppc64-qemu-setup.sh` → `ppc64-be-build.sh` → `ppc64-be-inner.sh` | Pinned host binfmt + urbanogilson full image |
 | freebsd | `vm-freebsd-prepare.sh` + `vm-freebsd-run.sh` | `FREEBSD_INSTALL_MODE`: interim or preferred |
@@ -14,12 +14,12 @@ Shared helpers live in [`shared/common.sh`](shared/common.sh) (e.g. `ci_default_
 
 ## Target selection (`targets.json` + `resolve-targets.sh`)
 
-[`targets.json`](targets.json) is the single source of truth for every target (`id`, `name`, `kind` = `native`|`qemu`|`vm`, `default`, and for native: `runner`, `fpc_target`). To add or change a target, edit only this file. Set `default: false` to stop a target from running automatically (it stays runnable via `workflow_dispatch`).
+[`targets.json`](targets.json) is the single source of truth for every target (`id`, `name`, `kind` = `native`|`qemu`|`vm`, `default`, `runner`, `fpc_target`). `kind` is descriptive metadata (it no longer drives a matrix). To add a target, add an entry here **and** a standalone job in [`make.yml`](../make.yml) (each target — native, qemu, or vm — is its own `if:`-gated job). Set `default: false` to stop a target from running automatically (it stays runnable via `workflow_dispatch`).
 
-[`resolve-targets.sh`](resolve-targets.sh) reads it via `jq` and emits two job outputs:
+[`resolve-targets.sh`](resolve-targets.sh) reads it via `jq` and emits two job outputs, both consumed by every standalone job:
 
-- `enabled_targets` (CSV) — gates the `qemu`/`vm` jobs via their job-level `if: contains(...)`.
-- `native_matrix` (JSON) — the `native` job's `strategy.matrix.include`. An empty array (no native targets selected) skips the job, so no runner is spun up just to gate.
+- `enabled_targets` (CSV) — gates each job via its job-level `if: contains(...)`.
+- `target_map` (JSON, id -> entry) — each job resolves its `runs-on` (`runner`) and `FPC_TARGET` (`fpc_target`) from this. It covers the whole registry so the lookup resolves even for an `if:`-skipped target. Job `name:` values stay literal in `make.yml` (a skipped job renders an unevaluated name expression in the UI).
 
 **Default targets** (`default: true`, run on push/PR): `linux-x64`, `linux-arm64`, `windows-x64`, `macos-arm64`, `macos-x64`, `linux-arm32`, `linux-powerpc64-be`, `freebsd`, `solaris`.
 

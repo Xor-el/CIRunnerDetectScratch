@@ -38,6 +38,12 @@ env:
   # a package that fails on the target even if unused); 'required' only compiles
   # the projects' dependency closure. Override per job below, like MAKE_BUILD_BACKEND.
   MAKE_PACKAGE_SCOPE: required
+  # Space/comma/semicolon-separated conditional defines passed to every compile in
+  # both backends (fpc: -dNAME, lazbuild: --opt=-dNAME). Override per job as needed.
+  # Examples:
+  #   single:   MAKE_DEFINES: WITH_GTK2_IM
+  #   multiple: MAKE_DEFINES: 'WITH_GTK2_IM DEBUG_LOG USE_CTHREADS'
+  MAKE_DEFINES: ''
   # Set by the workflow_dispatch "debug" toggle; '1' enables `set -x` tracing in
   # install-fpc-lazarus.sh, '0' otherwise. Forwarded into the sandboxed jobs below.
   CI_DEBUG: ${{ github.event.inputs.debug == 'true' && '1' || '0' }}

@@ -91,6 +91,11 @@ type
       const AStubFileName, AUnitOutDir: string);
     class procedure AppendProjectBuildArgs(AArgs: TStrings;
       const AMainSource, AUnitOutDir, ATargetBinary: string);
+    // Conditional defines, formatted per backend: fpc takes -dNAME directly on
+    // the argv (must precede the source); lazbuild forwards them to the compiler
+    // via repeatable --opt=-dNAME (its own -d means --skip-dependencies).
+    class procedure AppendFpcDefineArgs(const ADefines: TStrings; AArgs: TStrings);
+    class procedure AppendLazbuildDefineArgs(const ADefines: TStrings; AArgs: TStrings);
   private
     class function IsAbsolutePath(const S: string): Boolean;
     class function ExpandMacros(const S, AProjDir, AUnitOutDir, APkgOutDir,
@@ -125,7 +130,7 @@ type
     constructor CreateFromFile(const ALpiPath, ATargetCpu, ATargetOs: string);
     destructor Destroy; override;
     function IsValid: Boolean;
-    function BuildFpcArgv(const AExtraUnitPaths: TStrings;
+    function BuildFpcArgv(const AExtraUnitPaths, ADefines: TStrings;
       ATargetCpu, ATargetOs: string): TStringList;
     property RequiredPackageNames: TStringList read FRequiredPackageNames;
     property TargetBinary: string read FTargetBinary;
@@ -214,6 +219,7 @@ type
     FBackend: TBuildBackend;
     FBackendResolved: Boolean;
     FPackageScope: TPackageScope;
+    FDefines: TStringList;
     FTargetCpu: string;
     FTargetOs: string;
     FErrorCount: Integer;
@@ -221,6 +227,7 @@ type
     FGraph: TPackageGraph;
     function ParseBackendEnv: TBuildBackend;
     function ParsePackageScopeEnv: TPackageScope;
+    function ParseDefinesEnv: TStringList;
     procedure InitEnvironment;
     procedure UpdateSubmodules;
     procedure InstallDependencies;
@@ -248,6 +255,8 @@ type
     procedure RegisterAllPackagesLazbuild(const ASearchDir: string);
     procedure BuildPackageLazbuild(const APath: string);
     procedure BuildAllPackagesLazbuild(const ASearchDir: string);
+    function LazbuildArgs(const ABaseFlags: array of string;
+      const APath: string): TStringList;
     function UsesLazbuild: Boolean;
     function LclSupported: Boolean;
     function RunCommandEx(const AExecutable: string; const AArgs: TStrings;
@@ -276,6 +285,9 @@ type
     procedure IncError;
     property TargetCpu: string read FTargetCpu;
     property TargetOs: string read FTargetOs;
+    // Conditional defines (from MAKE_DEFINES) applied to every compile, in both
+    // backends. Read by TPackageGraph when building discovered packages.
+    property Defines: TStringList read FDefines;
   end;
 
 // ---------------------------------------------------------------------------
@@ -639,6 +651,28 @@ begin
   AArgs.Add(AMainSource);
 end;
 
+class procedure TLazXml.AppendFpcDefineArgs(const ADefines: TStrings;
+  AArgs: TStrings);
+var
+  I: Integer;
+begin
+  if not Assigned(ADefines) then
+    Exit;
+  for I := 0 to ADefines.Count - 1 do
+    AArgs.Add('-d' + ADefines[I]);
+end;
+
+class procedure TLazXml.AppendLazbuildDefineArgs(const ADefines: TStrings;
+  AArgs: TStrings);
+var
+  I: Integer;
+begin
+  if not Assigned(ADefines) then
+    Exit;
+  for I := 0 to ADefines.Count - 1 do
+    AArgs.Add('--opt=-d' + ADefines[I]);
+end;
+
 // ---------------------------------------------------------------------------
 // TProjectFiles
 // ---------------------------------------------------------------------------
@@ -792,7 +826,7 @@ begin
     FileExists(FMainLpr);
 end;
 
-function TLpiProject.BuildFpcArgv(const AExtraUnitPaths: TStrings;
+function TLpiProject.BuildFpcArgv(const AExtraUnitPaths, ADefines: TStrings;
   ATargetCpu, ATargetOs: string): TStringList;
 var
   I: Integer;
@@ -800,6 +834,7 @@ begin
   Result := TStringList.Create;
   TLazXml.AppendCompilerOptionsToArgv(FOptions, FProjDir, FUnitOutDir, FUnitOutDir,
     ATargetCpu, ATargetOs, Result);
+  TLazXml.AppendFpcDefineArgs(ADefines, Result);
   if Assigned(AExtraUnitPaths) then
     for I := 0 to AExtraUnitPaths.Count - 1 do
       TLazXml.AppendFuIfMissing(AExtraUnitPaths[I], Result);
@@ -1156,6 +1191,7 @@ begin
   try
     TLazXml.AppendCompilerOptionsToArgv(Pkg.Options, Pkg.PkgDir, OutDir,
       OutDir, FRunner.TargetCpu, FRunner.TargetOs, Args);
+    TLazXml.AppendFpcDefineArgs(FRunner.Defines, Args);
     for J := 0 to Pkg.SourceDirs.Count - 1 do
       TLazXml.AppendFuIfMissing(Pkg.SourceDirs[J], Args);
     TLazXml.AppendFuIfMissing(Pkg.PkgDir, Args);
@@ -1297,12 +1333,14 @@ begin
   // Honor the NO_COLOR convention (https://no-color.org): any value disables
   // ANSI colors. GitHub Actions renders ANSI in its log viewer, so default on.
   FUseColor := GetEnvironmentVariable('NO_COLOR') = '';
+  FDefines := TStringList.Create;
   FGraph := TPackageGraph.Create(Self);
 end;
 
 destructor TMakeRunner.Destroy;
 begin
   FGraph.Free;
+  FDefines.Free;
   inherited Destroy;
 end;
 
@@ -1377,6 +1415,43 @@ begin
   if Env = 'required' then
     Exit(TPackageScope.Required);
   raise Exception.CreateFmt('unknown MAKE_PACKAGE_SCOPE: "%s"', [Env]);
+end;
+
+// Parse MAKE_DEFINES into a deduped list of conditional-define names. Accepts a
+// space/comma/semicolon-separated list; each entry must be a valid identifier
+// ([A-Za-z_][A-Za-z0-9_]*) so it is a safe -d argument in either backend.
+function TMakeRunner.ParseDefinesEnv: TStringList;
+var
+  Raw, Name: string;
+  Parts: TStringArray;
+  Validator: TRegExpr;
+  I: Integer;
+begin
+  Result := TStringList.Create;
+  // Sorted + dupIgnore dedupes case-insensitively; define order is irrelevant
+  // to the compiler.
+  Result.CaseSensitive := False;
+  Result.Sorted := True;
+  Result.Duplicates := dupIgnore;
+  Raw := Trim(GetEnvironmentVariable('MAKE_DEFINES'));
+  if Raw = '' then
+    Exit;
+  Parts := Raw.Split([' ', ',', ';', #9], TStringSplitOptions.ExcludeEmpty);
+  Validator := TRegExpr.Create('^[A-Za-z_][A-Za-z0-9_]*$');
+  try
+    for I := 0 to High(Parts) do
+    begin
+      Name := Trim(Parts[I]);
+      if Name = '' then
+        Continue;
+      if not Validator.Exec(Name) then
+        raise Exception.CreateFmt('invalid define in MAKE_DEFINES: "%s" ' +
+          '(expected identifier characters only)', [Name]);
+      Result.Add(Name);
+    end;
+  finally
+    Validator.Free;
+  end;
 end;
 
 function TMakeRunner.UsesLazbuild: Boolean;
@@ -1608,6 +1683,13 @@ begin
     TPackageScope.Required:
       Log(CSI_Yellow, 'package scope: required');
   end;
+
+  FreeAndNil(FDefines);
+  FDefines := ParseDefinesEnv;
+  if FDefines.Count > 0 then
+    Log(CSI_Yellow, 'defines: ' + FDefines.DelimitedText)
+  else
+    Log(CSI_Yellow, 'defines: (none)');
 end;
 
 procedure TMakeRunner.UpdateSubmodules;
@@ -1803,9 +1885,25 @@ begin
   ForEachLpkInDir(ASearchDir, @RegisterPackageLazbuild);
 end;
 
+// Assemble a lazbuild argv: base flags, then the configured defines as
+// --opt=-dNAME, then the target path. Centralizes define injection so project
+// and package builds stay consistent.
+function TMakeRunner.LazbuildArgs(const ABaseFlags: array of string;
+  const APath: string): TStringList;
+var
+  Flag: string;
+begin
+  Result := TStringList.Create;
+  for Flag in ABaseFlags do
+    Result.Add(Flag);
+  TLazXml.AppendLazbuildDefineArgs(FDefines, Result);
+  Result.Add(APath);
+end;
+
 procedure TMakeRunner.BuildPackageLazbuild(const APath: string);
 var
   BuildOutput: string;
+  Args: TStringList;
 begin
   // Parity with the fpc backend's TPackageGraph.BuildAll: --add-package-link only
   // registers a package; it never compiles it, so a dependency that fails to
@@ -1816,14 +1914,18 @@ begin
   if TPackageGraph.ShouldSkipLpk(APath, LclSupported) then
     Exit;
   LogInline(CSI_Yellow, 'build package ' + APath);
-  if RunCommandEx('lazbuild', ['--build-all', '--recursive', APath], '', True,
-    BuildOutput) then
-    Log(CSI_Green, ' -> ok')
-  else
-  begin
-    WriteLn(stderr, BuildOutput);
-    IncError;
-    ReportBuildErrors(BuildOutput);
+  Args := LazbuildArgs(['--build-all', '--recursive'], APath);
+  try
+    if RunCommandEx('lazbuild', Args, '', True, BuildOutput) then
+      Log(CSI_Green, ' -> ok')
+    else
+    begin
+      WriteLn(stderr, BuildOutput);
+      IncError;
+      ReportBuildErrors(BuildOutput);
+    end;
+  finally
+    Args.Free;
   end;
 end;
 
@@ -1961,6 +2063,7 @@ function TMakeRunner.BuildProjectWithLazbuild(const APath: string): string;
 var
   Proj: TLpiProject;
   BuildOutput: string;
+  Args: TStringList;
 begin
   Result := '';
   Proj := TLpiProject.CreateFromFile(APath, FTargetCpu, FTargetOs);
@@ -1972,20 +2075,25 @@ begin
       Exit;
     end;
     PrepareProjectBuild(Proj);
-    if RunCommandEx('lazbuild', ['--build-all', '--recursive',
-      '--no-write-project', APath], '', True, BuildOutput) then
-    begin
-      Result := ExtractBinaryFromBuildLog(BuildOutput, Proj.TargetBinary);
-      if Result <> '' then
-        Log(CSI_Green, ' -> ' + Result)
+    Args := LazbuildArgs(['--build-all', '--recursive', '--no-write-project'],
+      APath);
+    try
+      if RunCommandEx('lazbuild', Args, '', True, BuildOutput) then
+      begin
+        Result := ExtractBinaryFromBuildLog(BuildOutput, Proj.TargetBinary);
+        if Result <> '' then
+          Log(CSI_Green, ' -> ' + Result)
+        else
+          WriteLn(stderr, BuildOutput);
+      end
       else
+      begin
         WriteLn(stderr, BuildOutput);
-    end
-    else
-    begin
-      WriteLn(stderr, BuildOutput);
-      IncError;
-      ReportBuildErrors(BuildOutput);
+        IncError;
+        ReportBuildErrors(BuildOutput);
+      end;
+    finally
+      Args.Free;
     end;
   finally
     Proj.Free;
@@ -2011,7 +2119,7 @@ begin
     PrepareProjectBuild(Proj);
     ExtraPaths := FGraph.UnitPathsForRequired(Proj.RequiredPackageNames);
     try
-      Args := Proj.BuildFpcArgv(ExtraPaths, FTargetCpu, FTargetOs);
+      Args := Proj.BuildFpcArgv(ExtraPaths, FDefines, FTargetCpu, FTargetOs);
       try
         if RunCommandEx('fpc', Args, Proj.ProjDir, True, BuildOutput) then
         begin

@@ -192,10 +192,41 @@ ci_openssl_hack() {
   esac
 }
 
+# Fail with a clear message unless every named .deb is fully installed and
+# configured ("install ok installed" per dpkg-query).
+ci_require_dpkg_installed() {
+  local pkg status missing=()
+  for pkg in "$@"; do
+    status="$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)"
+    [ "$status" = "install ok installed" ] || missing+=("$pkg")
+  done
+  if [ "${#missing[@]}" -gt 0 ]; then
+    echo "::error::required packages not installed/configured: ${missing[*]}" >&2
+    exit 1
+  fi
+}
+
 ci_debian_container_bootstrap() {
   export DEBIAN_FRONTEND=noninteractive
+  local required=(curl ca-certificates git build-essential openssl "$@")
+
   apt-get update
-  apt-get install -y curl ca-certificates git build-essential openssl "$@"
+
+  # Some Debian-ports sid rootfs images ship systemd (and its dependents) in an
+  # unconfigured state, and its maintainer script can crash under QEMU user-mode
+  # ("stack smashing detected"), making apt-get return non-zero. None of those
+  # packages are needed to build FPC/Lazarus console apps, and nothing later in
+  # the flow re-runs apt/dpkg (the FPC/Lazarus install builds from source). So we
+  # do not let that abort the job; instead we require that the packages we
+  # actually need ended up installed and configured.
+  local apt_rc=0
+  apt-get install -y "${required[@]}" || apt_rc=$?
+  if [ "$apt_rc" -ne 0 ]; then
+    echo "::warning::apt-get install exited $apt_rc; a non-essential package likely failed to configure (e.g. systemd under QEMU). Verifying required packages." >&2
+  fi
+
+  ci_require_dpkg_installed "${required[@]}"
+
   OPENSSL_USE_SUDO=0 bash "$CI_ROOT/openssl-libssl11-shim-unix.sh" "${OPENSSL_ARCH_DIR:-}"
 }
 

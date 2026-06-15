@@ -17,6 +17,11 @@ type
   // Selected via MAKE_BUILD_BACKEND (defaults to Fpc when unset). Lazbuild
   // drives builds through the IDE tool; Fpc builds packages/projects by
   // invoking the compiler directly (see TPackageGraph).
+  //
+  // The backend also decides whether LCL content is buildable: Lazbuild
+  // installs the full Lazarus/LCL (so LCL packages, LCL-dependent packages and
+  // GUI projects can be built), whereas Fpc has no widgetset and skips them.
+  // See TMakeRunner.LclSupported.
   TBuildBackend = (
     Lazbuild,
     Fpc
@@ -189,11 +194,15 @@ type
     function PackageCount: Integer;
     class function ExcludePattern: string;
     class function ShouldExcludeLpkPath(const ALpkPath: string): Boolean;
-    class function ShouldSkipLpk(const ALpkPath: string): Boolean;
+    // AAllowLcl is True when the full Lazarus/LCL is present (lazbuild backend),
+    // in which case LCL-dependent packages are buildable and are not skipped.
+    // Wrong-platform widgetset/template packages are skipped regardless.
+    class function ShouldSkipLpk(const ALpkPath: string;
+      AAllowLcl: Boolean): Boolean;
     // Returns True if the .lpk should be skipped, logging the reason via
     // ARunner when it is skipped solely for an LCL (GUI) dependency.
     class function ShouldSkipLpkLogged(ARunner: TMakeRunner;
-      const ALpkPath: string): Boolean;
+      const ALpkPath: string; AAllowLcl: Boolean): Boolean;
   end;
 
   // ---------------------------------------------------------------------------
@@ -218,6 +227,7 @@ type
     procedure BuildDiscoveredPackagesFpc;
     function CollectProjectRequiredNames: TStringList;
     procedure BuildAllProjects;
+    procedure BuildGuiProject(const ALpiPath: string);
     function BuildProject(const ALpiPath: string): string;
     function BuildProjectWithLazbuild(const APath: string): string;
     function BuildProjectWithFpc(const APath: string): string;
@@ -239,6 +249,7 @@ type
     procedure BuildPackageLazbuild(const APath: string);
     procedure BuildAllPackagesLazbuild(const ASearchDir: string);
     function UsesLazbuild: Boolean;
+    function LclSupported: Boolean;
     function RunCommandEx(const AExecutable: string; const AArgs: TStrings;
       const AWorkingDir: string; AStreamToStderr: Boolean;
       out AOutput: string): Boolean; overload;
@@ -943,16 +954,23 @@ begin
   end;
 end;
 
-class function TPackageGraph.ShouldSkipLpk(const ALpkPath: string): Boolean;
+class function TPackageGraph.ShouldSkipLpk(const ALpkPath: string;
+  AAllowLcl: Boolean): Boolean;
 begin
-  Result := ShouldExcludeLpkPath(ALpkPath) or
-    TLpkPackage.HasLclDependencyInFile(ALpkPath);
+  // Wrong-platform widgetset/template packages are never buildable here, even
+  // with the full Lazarus present, so they are always skipped.
+  if ShouldExcludeLpkPath(ALpkPath) then
+    Exit(True);
+  // With the full Lazarus/LCL present (lazbuild) an LCL dependency is fine.
+  if AAllowLcl then
+    Exit(False);
+  Result := TLpkPackage.HasLclDependencyInFile(ALpkPath);
 end;
 
 class function TPackageGraph.ShouldSkipLpkLogged(ARunner: TMakeRunner;
-  const ALpkPath: string): Boolean;
+  const ALpkPath: string; AAllowLcl: Boolean): Boolean;
 begin
-  Result := ShouldSkipLpk(ALpkPath);
+  Result := ShouldSkipLpk(ALpkPath, AAllowLcl);
   // Platform/template packages are excluded silently; only the LCL skip is
   // worth a note since it is the reason a console-only CI drops a package.
   if Result and not ShouldExcludeLpkPath(ALpkPath) then
@@ -1006,7 +1024,7 @@ procedure TPackageGraph.RegisterLpk(const ALpkPath: string);
 var
   Pkg: TLpkPackage;
 begin
-  if ShouldSkipLpkLogged(FRunner, ALpkPath) then
+  if ShouldSkipLpkLogged(FRunner, ALpkPath, FRunner.LclSupported) then
     Exit;
 
   Pkg := TLpkPackage.CreateFromFile(ALpkPath, FRunner.TargetCpu, FRunner.TargetOs);
@@ -1366,6 +1384,15 @@ begin
   if not FBackendResolved then
     InitEnvironment;
   Result := FBackend = TBuildBackend.Lazbuild;
+end;
+
+// LCL (GUI projects and LCL-dependent packages) can only be built when the full
+// Lazarus/LCL is present, which is exactly the lazbuild backend. The fpc backend
+// has no widgetset, so LCL content is skipped there. Single source of truth for
+// every LCL-gating decision in the build flow.
+function TMakeRunner.LclSupported: Boolean;
+begin
+  Result := UsesLazbuild;
 end;
 
 function TMakeRunner.RunCommandEx(const AExecutable: string; const AArgs: TStrings;
@@ -1764,7 +1791,7 @@ procedure TMakeRunner.RegisterPackageLazbuild(const APath: string);
 var
   CommandOutput: string;
 begin
-  if TPackageGraph.ShouldSkipLpkLogged(Self, APath) then
+  if TPackageGraph.ShouldSkipLpkLogged(Self, APath, LclSupported) then
     Exit;
   if RunCommandEx('lazbuild', ['--add-package-link', APath], '', False,
     CommandOutput) then
@@ -1786,7 +1813,7 @@ begin
   // it. Compile every registered package explicitly to catch that.
   // Uses the non-logging skip so LCL packages are not re-announced (registration
   // already logged them).
-  if TPackageGraph.ShouldSkipLpk(APath) then
+  if TPackageGraph.ShouldSkipLpk(APath, LclSupported) then
     Exit;
   LogInline(CSI_Yellow, 'build package ' + APath);
   if RunCommandEx('lazbuild', ['--build-all', '--recursive', APath], '', True,
@@ -2092,6 +2119,18 @@ begin
   end;
 end;
 
+// Compile a GUI (LCL) project without running it. Only reached on the lazbuild
+// backend, where the full LCL is available; GUI apps need a display to run, so
+// CI only verifies they build.
+procedure TMakeRunner.BuildGuiProject(const ALpiPath: string);
+var
+  BinaryPath: string;
+begin
+  BinaryPath := BuildProject(ALpiPath);
+  if BinaryPath <> '' then
+    Log(CSI_Green, 'built GUI project (not run) ' + BinaryPath);
+end;
+
 procedure TMakeRunner.BuildAllProjects;
 var
   List: TStringList;
@@ -2103,7 +2142,14 @@ begin
     begin
       if IsGUIProject(Each) then
       begin
-        Log(CSI_Yellow, 'skip GUI project ' + Each);
+        if not LclSupported then
+        begin
+          Log(CSI_Yellow, 'skip GUI project ' + Each);
+          Continue;
+        end;
+        // lazbuild backend: the full LCL is present, so compile the GUI project
+        // to verify it builds. It is not run because GUI apps need a display.
+        BuildGuiProject(Each);
         Continue;
       end;
 

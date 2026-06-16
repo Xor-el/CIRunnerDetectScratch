@@ -14,7 +14,9 @@ Shared helpers live in [`shared/common.sh`](shared/common.sh) (e.g. `ci_default_
 
 ## Target selection (`targets.json` + `resolve-targets.sh`)
 
-[`targets.json`](targets.json) is the single source of truth for every target (`id`, `name`, `kind` = `native`|`qemu`|`vm`, `default`, `runner`, `fpc_target`). `kind` is descriptive metadata (it no longer drives a matrix). To add a target, add an entry here **and** a standalone job in [`make.yml`](../make.yml) (each target — native, qemu, or vm — is its own `if:`-gated job). Set `default: false` to stop a target from running automatically (it stays runnable via `workflow_dispatch`).
+[`targets.json`](targets.json) is the single source of truth for every target (`id`, `name`, `kind` = `native`|`qemu`|`vm`, `default`, `runner`, `fpc_target`, and the optional `fpc_tarball_target`). `kind` is descriptive metadata (it no longer drives a matrix). To add a target, add an entry here **and** a standalone job in [`make.yml`](../make.yml) (each target — native, qemu, or vm — is its own `if:`-gated job). Set `default: false` to stop a target from running automatically (it stays runnable via `workflow_dispatch`).
+
+`fpc_tarball_target` is optional: it overrides only the **tarball filename token** when a platform ships an OS-version suffix (e.g. `freebsd` uses `x86_64-freebsd11` for `fpc-3.2.2.x86_64-freebsd11.tar`). The download directory and extracted dir stay canonical (`fpc_target`). Every installer-running job forwards it as `FPC_TARBALL_TARGET`; [`install-fpc-lazarus.sh`](../install-fpc-lazarus.sh) defaults it to `FPC_TARGET` when empty/unset, so targets without the field need no change.
 
 [`resolve-targets.sh`](resolve-targets.sh) reads it via `jq` and emits two job outputs, both consumed by every standalone job:
 

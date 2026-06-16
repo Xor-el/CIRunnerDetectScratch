@@ -17,7 +17,7 @@ on:
           Comma-separated list of targets to run (leave empty for the default set).
           Valid IDs: linux-x64, linux-arm64, windows-x64, macos-arm64,
           macos-x64, linux-arm32, linux-powerpc64-be, freebsd, solaris,
-          netbsd, dragonflybsd
+          netbsd, dragonflybsd, openbsd
         default: ""
         type: string
       debug:
@@ -312,4 +312,27 @@ jobs:
           release: "11.4-gcc"
           usesh: true
           prepare: sh .github/workflows/ci/vm-solaris-prepare.sh
+          run: bash .github/workflows/ci/vm-run-shared.sh
+
+  openbsd:
+    name: "VM: OpenBSD x86_64"
+    runs-on: ${{ fromJSON(needs.setup.outputs.target_map)['openbsd'].runner }}
+    timeout-minutes: 120
+    needs: setup
+    if: contains(format(',{0},', needs.setup.outputs.enabled_targets), ',openbsd,')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - name: Build (OpenBSD x86_64)
+        uses: vmactions/openbsd-vm@v1
+        env:
+          FPC_TARGET: ${{ fromJSON(needs.setup.outputs.target_map)['openbsd'].fpc_target }}
+          FPC_TARBALL_TARGET: ${{ fromJSON(needs.setup.outputs.target_map)['openbsd'].fpc_tarball_target }}
+        with:
+          envs: FPC_VERSION LAZARUS_BRANCH LAZARUS_REPO MAKE_BUILD_BACKEND MAKE_PACKAGE_SCOPE FPC_TARGET FPC_TARBALL_TARGET CI_DEBUG
+          usesh: true
+          prepare: sh .github/workflows/ci/vm-openbsd-prepare.sh
           run: bash .github/workflows/ci/vm-run-shared.sh

@@ -8,7 +8,7 @@
 | linux-arm32 | `arm32-run.sh` → `arm32-install.sh` | Debian bootstrap + `ci_build_standard` |
 | linux-powerpc64-be | `ppc64-qemu-setup.sh` → `ppc64-be-build.sh` → `ppc64-be-inner.sh` | Pinned host binfmt + urbanogilson full image |
 | freebsd | `vm-freebsd-prepare.sh` + `vm-freebsd-run.sh` | `FREEBSD_INSTALL_MODE`: interim or preferred |
-| netbsd / dragonfly / solaris | `vm-*-prepare.sh` + `vm-run-shared.sh` | `ci_build_standard` |
+| netbsd / dragonfly / solaris / openbsd | `vm-*-prepare.sh` + `vm-run-shared.sh` | `ci_build_standard` |
 
 Shared helpers live in [`shared/common.sh`](shared/common.sh) (e.g. `ci_default_make_cmd`, `ci_is_windows`, `ci_build_standard`, `ci_build_prebuilt`). Build driver: [`../make.pas`](../make.pas) via `instantfpc`.
 
@@ -23,9 +23,9 @@ Shared helpers live in [`shared/common.sh`](shared/common.sh) (e.g. `ci_default_
 - `enabled_targets` (CSV) — gates each job via its job-level `if: contains(...)`.
 - `target_map` (JSON, id -> entry) — each job resolves its `runs-on` (`runner`) and `FPC_TARGET` (`fpc_target`) from this. It covers the whole registry so the lookup resolves even for an `if:`-skipped target. Job `name:` values stay literal in `make.yml` (a skipped job renders an unevaluated name expression in the UI).
 
-**Default targets** (`default: true`, run on push/PR): `linux-x64`, `linux-arm64`, `windows-x64`, `macos-arm64`, `macos-x64`, `linux-arm32`, `linux-powerpc64-be`, `freebsd`, `solaris`.
+**Default targets** (`default: true`, run on push/PR): `linux-x64`, `linux-arm64`, `windows-x64`, `macos-arm64`, `macos-x64`, `linux-arm32`, `linux-powerpc64-be`, `freebsd`, `solaris`, `netbsd`, `dragonflybsd`, `openbsd`.
 
-**Opt-in targets** (`default: false`, workflow_dispatch only): `netbsd`, `dragonflybsd` — pass explicitly in `enabled_targets`. The `enabled_targets` input also lets you run any single target or exclude others.
+**Opt-in targets** (`default: false`, workflow_dispatch only): none currently — every target runs on push/PR. Set `default: false` on an entry to make it opt-in (then pass it explicitly in `enabled_targets`). The `enabled_targets` input also lets you run any single target or a subset.
 
 ## PowerPC64 big-endian flow
 

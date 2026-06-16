@@ -23,9 +23,9 @@ Shared helpers live in [`shared/common.sh`](shared/common.sh) (e.g. `ci_default_
 - `enabled_targets` (CSV) — gates each job via its job-level `if: contains(...)`.
 - `target_map` (JSON, id -> entry) — each job resolves its `runs-on` (`runner`) and `FPC_TARGET` (`fpc_target`) from this. It covers the whole registry so the lookup resolves even for an `if:`-skipped target. Job `name:` values stay literal in `make.yml` (a skipped job renders an unevaluated name expression in the UI).
 
-**Default targets** (`default: true`, run on push/PR): `linux-x64`, `linux-arm64`, `windows-x64`, `macos-arm64`, `macos-x64`, `linux-arm32`, `linux-powerpc64-be`, `freebsd`, `solaris`.
+**Default targets** (`default: true`, run on push/PR): `linux-x64`, `linux-arm64`, `windows-x64`, `macos-arm64`, `macos-x64`, `linux-arm32`, `linux-powerpc64-be`, `freebsd`, `solaris`, `netbsd`, `dragonflybsd`.
 
-**Opt-in targets** (`default: false`, workflow_dispatch only): `netbsd`, `dragonflybsd` — pass explicitly in `enabled_targets`. The `enabled_targets` input also lets you run any single target or exclude others.
+**Opt-in targets** (`default: false`, workflow_dispatch only): none currently — every target runs on push/PR. Set `default: false` on an entry to make it opt-in (then pass it explicitly in `enabled_targets`). The `enabled_targets` input also lets you run any single target or a subset.
 
 ## PowerPC64 big-endian flow
 

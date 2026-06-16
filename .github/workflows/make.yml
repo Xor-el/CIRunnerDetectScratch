@@ -331,8 +331,9 @@ jobs:
         env:
           FPC_TARGET: ${{ fromJSON(needs.setup.outputs.target_map)['openbsd'].fpc_target }}
           FPC_TARBALL_TARGET: ${{ fromJSON(needs.setup.outputs.target_map)['openbsd'].fpc_tarball_target }}
+          OPENBSD_INSTALL_MODE: interim
         with:
-          envs: FPC_VERSION LAZARUS_BRANCH LAZARUS_REPO MAKE_BUILD_BACKEND MAKE_PACKAGE_SCOPE FPC_TARGET FPC_TARBALL_TARGET CI_DEBUG
+          envs: FPC_VERSION FPC_TARGET FPC_TARBALL_TARGET LAZARUS_BRANCH LAZARUS_REPO MAKE_BUILD_BACKEND MAKE_PACKAGE_SCOPE OPENBSD_INSTALL_MODE CI_DEBUG
           usesh: true
           prepare: sh .github/workflows/ci/vm-openbsd-prepare.sh
-          run: bash .github/workflows/ci/vm-run-shared.sh
+          run: bash .github/workflows/ci/vm-openbsd-run.sh

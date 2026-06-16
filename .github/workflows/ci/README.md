@@ -8,7 +8,8 @@
 | linux-arm32 | `arm32-run.sh` → `arm32-install.sh` | Debian bootstrap + `ci_build_standard` |
 | linux-powerpc64-be | `ppc64-qemu-setup.sh` → `ppc64-be-build.sh` → `ppc64-be-inner.sh` | Pinned host binfmt + urbanogilson full image |
 | freebsd | `vm-freebsd-prepare.sh` + `vm-freebsd-run.sh` | `FREEBSD_INSTALL_MODE`: interim or preferred |
-| netbsd / dragonfly / solaris / openbsd | `vm-*-prepare.sh` + `vm-run-shared.sh` | `ci_build_standard` |
+| openbsd | `vm-openbsd-prepare.sh` + `vm-openbsd-run.sh` | `OPENBSD_INSTALL_MODE`: interim (pkg fpc + `ci_build_prebuilt`) or preferred (`ci_build_standard`) |
+| netbsd / dragonfly / solaris | `vm-*-prepare.sh` + `vm-run-shared.sh` | `ci_build_standard` |
 
 Shared helpers live in [`shared/common.sh`](shared/common.sh) (e.g. `ci_default_make_cmd`, `ci_is_windows`, `ci_build_standard`, `ci_build_prebuilt`). Build driver: [`../make.pas`](../make.pas) via `instantfpc`.
 
